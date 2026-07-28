@@ -55,12 +55,12 @@ D:/red star project/
 
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
-- MediaPipe Hands（pip 已装）
-- TFNet `BiLSTM.py`（2 层双向 LSTM，直接复用）
-- TFNet `Train.py`（训练循环框架，可复用）
-- TFNet `DataProcessMoudle.py`（标签解析，可复用）
-- TFNet `WER.py`（词错误率评估，完整复用）
-- ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定）
+- MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
+- `src/preprocess_keypoints.py` — 多进程关键点预处理（8 workers，~3h 全量）
+- `src/model.py` — 1D Conv + BiLSTM + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
+- `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
+- TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
 
 ### 旁路（静态手势）— 数据齐全
 - CSL_basic_dataset（235 个中国手语单词视频，文件名即标签）
@@ -126,11 +126,11 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 | 模块 | 方式 | 代码量 | 说明 |
 |------|------|--------|------|
-| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.solutions.hands` |
+| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.solutions.hands` → 已迁至 `mp.tasks.vision.HandLandmarker` |
 | YOLOv8n 分类训练 | 调 API | 数据准备 ~100 行 | `ultralytics`, `model.train()` |
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
-| BiLSTM | 复用 TFNet | 0 行 | 直接 import |
-| 视频→关键点预处理 | **自己写** | ~150 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
+| BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
+| 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy。多进程 `Pool` + IMAGE 模式 |
 | 模型架构 model.py | **自己写** | ~80 行 | 1D Conv + BiLSTM + Linear，标准层 |
 | Dataset/DataLoader | **自己写** | ~120 行 | 读 .npy + 标签解析 + collate_fn |
 | 训练脚本 | **自己写** | ~100 行 | 复用 Train.py 框架，CTC Loss 替换 |
