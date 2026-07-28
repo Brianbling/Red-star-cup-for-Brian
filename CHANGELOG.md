@@ -6,17 +6,33 @@
 - 创建目录 `checkpoints/`、`CE-CSL/CE-CSL/keypoints/{train,dev,test}/`
 - 验证依赖：torch 2.7.1+cu128 (GPU)、mediapipe 0.10.35、opencv 5.0.0、numpy 2.2.6、ultralytics 8.4.105
 - 生成 `requirements.txt`
-- 更新 CLAUDE.md（ultralytics 版本确认、编程规范新增日志更新规则）
+- 更新 CLAUDE.md
 
 ### Phase 1 — 关键点预处理 [进行中]
-- **重要发现**：MediaPipe 0.10.35 API 完全不同——旧版 `mp.solutions.hands` 已移除，改为 `mp.tasks.vision.HandLandmarker`
-  - 需单独下载 `.task` 模型文件（`models/hand_landmarker.task`，约 7.6MB）
-  - `visibility` → `presence`，`detect()` → `detect_for_video(image, timestamp_ms)`
-  - 时间戳单调递增约束：每个视频需创建新的 landmarker 实例
-  - 遥测上报失败（被墙）不影响功能
-- 创建 `preprocess_keypoints.py`（~220 行），支持断点续跑
-- 小批量验证通过（10 个视频），输出质量：非零帧率 99%+，左右手关键点均有数据
-- 输出格式：(T, 84) float32，存至 `CE-CSL/CE-CSL/keypoints/{split}/{video_id}.npy`
-- 待全量跑
-- 清理冗余：删除 `mediapipe-master/` (84MB, pip已装) 和 `hagrid-master/` (13MB, 仅参考)
-- git init + .gitignore + 首次 commit（排除视频/模型权重/npy/zip，纳管代码和文档）
+- **API 变更**：MediaPipe 0.10.35 用 `mp.tasks.vision.HandLandmarker`（旧版 `mp.solutions.hands` 已移除）
+  - `visibility` → `presence`，`detect_for_video(image, timestamp_ms)` 替代 `detect()`
+  - 需单独下载 `.task` 模型文件（`models/hand_landmarker.task`，~7.6MB）
+  - **clearcut 遥测问题**：VIDEO 模式每 ~100s 触发 Google 遥测超时（~45s/次，被墙），改为 IMAGE 模式（`detect()` 无时间戳）+ 全局复用单个 HandLandmarker，消除阻塞
+  - IMAGE vs VIDEO 模式对比：检测一致性 99.5%，坐标差异 0.012，无遥测阻塞
+  - 实测 ~63ms/帧 CPU，全量 5988 视频约 19h
+- 创建 `src/preprocess_keypoints.py`，支持断点续跑
+- 输出格式：(T, 84) float32 → `CE-CSL/CE-CSL/keypoints/{split}/{video_id}.npy`
+- 全量预处理执行中（后台挂机，512/4987 train done, dev/test 排队中）
+- 清理冗余：删除 `mediapipe-master/`、`hagrid-master/`
+
+### Phase 2/3 — 模型 + 训练 + 解码 [代码完成，待训练]
+- **`src/build_vocab.py`**：从 CE-CSL CSV 构建词表 → `vocab.json`（3515 tokens）
+- **`src/model.py`**：1D Conv(84→256) + BiLSTM(256→512, 2层) + Linear(→vocab_size) + LogSoftmax，13.1M 参数
+- **`src/dataset.py`**：KeypointDataset 读取 .npy + CSV 标签，collate_fn time-major pad
+- **`src/train.py`**：CTC Loss + Adam + ReduceLROnPlateau + early stopping(patience=10) + WER 评估（复用 TFNet WER.py）
+- **`src/decode.py`**：CTC 贪心解码（argmax → unique_consecutive → 去 blank）
+- 所有模块导入、shape、解码流程验证通过
+
+### 文档维护
+- **目录结构**：所有项目代码迁入 `src/`，与第三方库和数据分离
+- **ARCHITECTURE.md 修复**：坐标归一化分母"双肩宽度"→"手腕间距"（MediaPipe Hands 无肩膀点）
+- git init + .gitignore + 首次 commit
+
+### 2026-07-28 (晚)
+- **Phase 1 进度**：train 512/4972 (10.3%)，每个 .npy ~50-65KB，32 进程并行，MP IMAGE 模式 ~63ms/帧
+- 清理无关进程：Anaconda Navigator (pythonw.exe x2)

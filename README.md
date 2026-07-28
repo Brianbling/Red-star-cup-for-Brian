@@ -28,10 +28,17 @@
 ├── YOLOv8/                # YOLO 检测模块
 ├── ctc_decoders-master/   # CTC 解码库（C++ + Python SWIG）
 │
-├── preprocess_keypoints.py # 预处理脚本（视频→关键点）
-├── models/                 # 模型文件
-├── checkpoints/            # 训练权重
-└── requirements.txt        # Python 依赖
+├── src/                         # 项目源代码（所有核心模块）
+│   ├── build_vocab.py           # 词表构建
+│   ├── preprocess_keypoints.py  # 预处理（视频→关键点）
+│   ├── model.py                 # 1D Conv + BiLSTM + Linear
+│   ├── dataset.py               # KeypointDataset + collate_fn
+│   ├── train.py                 # 训练脚本
+│   └── decode.py                # CTC 贪心解码
+├── models/                      # 模型文件
+├── checkpoints/                 # 训练权重
+├── vocab.json                   # 词表（build_vocab.py 生成）
+└── requirements.txt             # Python 依赖
 ```
 
 ## 当前进度（2026-07-28）
@@ -39,9 +46,9 @@
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | Phase 0 | 环境搭建 | 完成 |
-| Phase 1 | 关键点预处理 | 脚本写好，小批量验证通过，待全量跑 |
-| Phase 2 | 主路模型训练 | 待开始 |
-| Phase 3 | CTC 解码集成 | 待开始 |
+| Phase 1 | 关键点预处理 | 全量挂机中（~19h CPU，63ms/帧） |
+| Phase 2 | 主路模型训练 | 代码完成，待预处理完后启动 |
+| Phase 3 | CTC 解码集成 | 代码完成，CTC 贪心解码验证通过 |
 | Phase 4 | 实时推理管线 | 待开始 |
 | Phase 5 | 旁路 YOLO 分类 | 待开始 |
 | Phase 6 | 系统联调测试 | 待开始 |
@@ -64,7 +71,11 @@ pip install -r requirements.txt
 
 ```bash
 # 预处理：视频 → 关键点（先小批量验证）
-python preprocess_keypoints.py --split train --max_videos 10
+python src/preprocess_keypoints.py --split train --max_videos 10
+
+# 训练
+python src/build_vocab.py        # 构建词表（已生成 vocab.json）
+python src/train.py              # 训练模型
 
 # 更多操作见 .claude/commands/run.md，或问算法同学
 ```

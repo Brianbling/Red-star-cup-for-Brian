@@ -24,20 +24,32 @@
 D:/red star project/
 ├── ARCHITECTURE.md           # 系统架构设计文档（权威参考）
 ├── CLAUDE.md                 # 项目说明
-├── TFNet-main/               # 原 TFNet，复用 BiLSTM.py、Train.py、DataProcessMoudle.py、WER.py
+├── IMPLEMENTATION.md         # 实现计划
+├── CHANGELOG.md              # 工作日志
+├── README.md                 # 项目概览
+├── requirements.txt          # Python 依赖
+├── vocab.json                # 词表（build_vocab.py 生成，3515 tokens）
+├── src/                      # 项目源代码
+│   ├── build_vocab.py        # 词表构建
+│   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
+│   ├── model.py              # 1D Conv + BiLSTM + Linear
+│   ├── dataset.py            # KeypointDataset + collate_fn
+│   ├── train.py              # CTC Loss 训练脚本
+│   └── decode.py             # CTC 贪心解码 + 后处理
+├── TFNet-main/               # 原 TFNet，复用 BiLSTM.py、WER.py 等
 │   └── params/config.ini     # 原配置（Linux 路径已过时，不直接使用）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
-│   ├── video/{train,dev,test}/  # 6000 条视频 (.mp4)，含句子级标注
-│   └── label/{train,dev,test}.csv
-├── CSL_basic_dataset/         # 中国手语基础词，235 mp4，320×240/25fps/2-4s，文件名即标签，无 CSV/无划分
-├── CSL_common_dataset/        # 中国手语常用词，863 mp4，320×240/25fps/2-4s，文件名即标签，无 CSV/无划分
+│   ├── video/{train,dev,test}/  # 6000 条视频 (.mp4)
+│   ├── label/{train,dev,test}.csv
+│   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)
+├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
+├── CSL_common_dataset/        # 中国手语常用词，863 mp4
 ├── YOLOv8/                   # YOLOv8，已有 MNIST demo，待改造为静态手势分类
-├── ASL Alphabet/             # 美式手语字母数据集（旁路静态手势预训练参考）
-├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（SWIG Python 绑定）
-├── models/                   # 模型文件（MediaPipe task 等）
-│   └── hand_landmarker.task  # MediaPipe Hand Landmarker 模型 (~7.6MB)
-├── checkpoints/              # 模型权重保存目录（待创建）
-└── CE-CSL/CE-CSL/keypoints/  # 预处理关键点缓存（待创建）
+├── ASL Alphabet/             # 美式手语字母数据集
+├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库
+├── models/                   # 模型文件
+│   └── hand_landmarker.task  # MediaPipe Hand Landmarker (~7.6MB)
+└── checkpoints/              # 模型权重保存目录
 ```
 
 ## 技术栈与环境
