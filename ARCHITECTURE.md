@@ -185,7 +185,7 @@ CE-CSL 视频
   → 导出 .pt 权重
 ```
 
-训练复用 TFNet 的 `Train.py` 框架和 `DataProcessMoudle.py` 数据加载逻辑，但特征提取换成 MediaPipe。
+训练代码为独立实现（`src/train.py`、`src/dataset.py`、`src/model.py`），未复用 TFNet 训练框架。
 
 ---
 

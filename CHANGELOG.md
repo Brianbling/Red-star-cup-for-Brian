@@ -36,3 +36,4 @@
 ### 2026-07-28 (晚)
 - **Phase 1 进度**：train 512/4972 (10.3%)，每个 .npy ~50-65KB，32 进程并行，MP IMAGE 模式 ~63ms/帧
 - 清理无关进程：Anaconda Navigator (pythonw.exe x2)
+- **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 13.1M（非~5M）、Phase 4 模块拆分更新

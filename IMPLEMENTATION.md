@@ -82,7 +82,7 @@ CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 - 按 `/` 分割，去重，去空，去纯标点
 - 加 `<blank>` 作为 CTC 的 blank token
 - 生成 `vocab.json`：`{"<blank>": 0, "2023": 1, "高考": 2, ...}`
-- 估算词表大小：~500-1000 词
+- 实际词表大小：**3515 tokens**（初始预估 500-1000 偏低）
 
 ### 2.2 Dataset / DataLoader
 - 读取 `.npy` 关键点文件 → tensor (T, 84)
@@ -111,7 +111,7 @@ Input (T, 84)
 ### 2.5 时间估算
 | 因素 | 估算 |
 |------|------|
-| 模型参数 | ~5M（远小于 TFNet 的 21M） |
+| 模型参数 | **13.1M**（初始预估 ~5M 偏低） |
 | 每 epoch 训练 | ~10-15min（batch_size=1，6000 样本） |
 | 50 epoch | ~10-12h |
 | 早停可能提前 | ~30 epoch / ~6h |
@@ -151,7 +151,9 @@ def ctc_greedy_decode(logits):
 
 ## Phase 4 — 实时推理管线（~4-6h，CPU）
 
-### 4.1 模块拆分（6 个文件）
+### 4.1 模块拆分（4 个待写文件 + 2 个已完成）
+
+`model.py` 和 `decode.py` 已在 Phase 2/3 中完成（`src/model.py`、`src/decode.py`），可直接导入使用。剩余 4 个文件：
 
 #### `preprocess.py` — 帧预处理 + 特征提取
 ```
