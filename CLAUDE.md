@@ -61,7 +61,9 @@ D:/red star project/
 │
 ├── CSL_basic_dataset/        # 旁路：235 个词视频（无 CSV，文件名即标签）
 ├── CSL_common_dataset/       # 旁路：863 个词视频（无 CSV，文件名即标签）
-├── SLR_Dataset/              # CSL-2015：25K 孤立词 + 100 句连续
+├── SLR_Dataset/              # CSL-2015（中科大手语数据集）
+│   ├── 【孤立词】SLR_dataset/  #   25,000 条，旁路 YOLO
+│   └── 【连续句子】SLR_dataset/ #   100 句（corpus.txt），量太少不适合主路
 ├── ASL Alphabet/             # 美式手语字母（旁路预训练参考）
 │
 ├── TFNet-main/               # 原论文代码，仅复用 WER.py
@@ -72,6 +74,7 @@ D:/red star project/
 │   ├── espnet-master/        #   流式 ASR 研究框架
 │   ├── landmark-extraction-main/  # 手部关键点预处理工具链
 │   ├── slt-master/           #   手语翻译模型
+│   ├── slt_how2sign_wicv2023-wicv23/  # 手语翻译 fairseq 实现
 │   └── k2-master/            #   FSA/FST 框架
 │
 ├── models/hand_landmarker.task  # MediaPipe 模型 (~7.6MB)
