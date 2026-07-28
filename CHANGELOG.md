@@ -17,7 +17,7 @@
   - 实测 ~63ms/帧 CPU，全量 5988 视频约 19h
 - 创建 `src/preprocess_keypoints.py`，支持断点续跑
 - 输出格式：(T, 84) float32 → `CE-CSL/CE-CSL/keypoints/{split}/{video_id}.npy`
-- 全量预处理执行中（后台挂机，512/4987 train done, dev/test 排队中）
+- 全量预处理执行中（后台挂机，train 1796/4972 36.1%, dev/test 排队中, 最新 23:53）
 - 清理冗余：删除 `mediapipe-master/`、`hagrid-master/`
 
 ### Phase 2/3 — 模型 + 训练 + 解码 [代码完成，待训练]
@@ -34,6 +34,6 @@
 - git init + .gitignore + 首次 commit
 
 ### 2026-07-28 (晚)
-- **Phase 1 进度**：train 512/4972 (10.3%)，每个 .npy ~50-65KB，32 进程并行，MP IMAGE 模式 ~63ms/帧
+- **Phase 1 进度**：train 1796/4972 (36.1%)，最新输出 23:53，正常运行中
 - 清理无关进程：Anaconda Navigator (pythonw.exe x2)
 - **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 13.1M（非~5M）、Phase 4 模块拆分更新
