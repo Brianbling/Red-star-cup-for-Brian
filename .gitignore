@@ -1,0 +1,52 @@
+# 数据文件（体积大，不纳入版本管理）
+CE-CSL/CE-CSL/video/
+CE-CSL/CE-CSL/keypoints/
+CSL_basic_dataset/
+CSL_common_dataset/
+ASL Alphabet/
+
+# 模型权重
+*.pt
+*.pth
+*.onnx
+*.plan
+*.engine
+*.tflite
+*.task
+
+# 多媒体
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.npy
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 空目录
+checkpoints/
+
+# 临时 / 日志
+*.log
+YOLOv8/mnist_jpg/
+YOLOv8/runs/
+YOLOv8/mnist/
+*.rar
