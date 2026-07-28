@@ -1,4 +1,4 @@
-# 红星光项目 — Red Star Project
+# 红星杯项目 — Red Star Project
 
 ## 一句话目标
 
