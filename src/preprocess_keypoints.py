@@ -2,10 +2,10 @@
 Phase 1: 关键点预处理
 CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy
 
-API: MediaPipe 0.10.35 (tasks API, HandLandmarker)
+API: MediaPipe 0.10.35 (tasks API, HandLandmarker, IMAGE mode)
 输出格式: (T, 84) float32
   左手 21 点 (x,y) + 右手 21 点 (x,y) = 42 点 × 2 = 84 维
-  presence < 0.6 的坐标置零（新 API 用 presence 替代 visibility）
+  presence < 0.6 的坐标置零
   手部完全丢失时填全零
 
 用法:
@@ -14,9 +14,12 @@ API: MediaPipe 0.10.35 (tasks API, HandLandmarker)
   python preprocess_keypoints.py --split all                     # 全部
 """
 
+import os
+os.environ["GLOG_minloglevel"] = "3"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import cv2
 import numpy as np
-import os
 import argparse
 import csv
 import time
@@ -26,7 +29,6 @@ from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import (
     HandLandmarker,
     HandLandmarkerOptions,
-    HandLandmarkerResult,
     RunningMode,
 )
 from mediapipe.tasks.python.vision.core.image import Image, ImageFormat
@@ -38,19 +40,17 @@ LABEL_DIR = BASE_DIR / "CE-CSL/CE-CSL/label"
 KEYPOINT_DIR = BASE_DIR / "CE-CSL/CE-CSL/keypoints"
 MODEL_PATH = BASE_DIR / "models/hand_landmarker.task"
 
-PRESENCE_THRESHOLD = 0.6  # 低于此值坐标置零
+PRESENCE_THRESHOLD = 0.6
 LETTER_DIRS = list("ABCDEFGHIJKL")
 
 
 def create_landmarker():
-    """创建 MediaPipe HandLandmarker（VIDEO 模式）"""
     options = HandLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=str(MODEL_PATH)),
-        running_mode=RunningMode.VIDEO,
+        running_mode=RunningMode.IMAGE,
         num_hands=2,
         min_hand_detection_confidence=0.5,
         min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
     )
     return HandLandmarker.create_from_options(options)
 
@@ -63,14 +63,10 @@ def find_video(split, video_id):
     return None
 
 
-def extract_keypoints(landmarker, frame_bgr, timestamp_ms):
-    """
-    对一帧图像提取左右手关键点。
-    返回 (84,) float32 向量。
-    """
+def extract_keypoints(landmarker, frame_bgr):
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
-    result = landmarker.detect_for_video(mp_image, timestamp_ms)
+    result = landmarker.detect(mp_image)
 
     keypoints = np.zeros(84, dtype=np.float32)
 
@@ -78,11 +74,10 @@ def extract_keypoints(landmarker, frame_bgr, timestamp_ms):
         return keypoints
 
     for i, landmarks in enumerate(result.hand_landmarks):
-        handedness = result.handedness[i][0].category_name  # "Left" / "Right"
+        handedness = result.handedness[i][0].category_name
         offset = 0 if handedness == "Left" else 42
 
         for j, lm in enumerate(landmarks):
-            # 新 API: presence 替代了 visibility（0.10.x 同时有 presence 和 visibility）
             presence = lm.presence if lm.presence is not None else 1.0
             if presence > PRESENCE_THRESHOLD:
                 keypoints[offset + j * 2] = lm.x
@@ -91,23 +86,19 @@ def extract_keypoints(landmarker, frame_bgr, timestamp_ms):
     return keypoints
 
 
-def process_video(landmarker, video_path, save_path, fps):
-    """处理单个视频，逐帧提取关键点，保存为 .npy"""
+def process_video(landmarker, video_path, save_path):
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         print(f"  [ERROR] 无法打开视频: {video_path}")
         return 0, False
 
     frames = []
-    frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        timestamp_ms = int(frame_idx * 1000 / fps)
-        kp = extract_keypoints(landmarker, frame, timestamp_ms)
+        kp = extract_keypoints(landmarker, frame)
         frames.append(kp)
-        frame_idx += 1
 
     cap.release()
 
@@ -115,7 +106,7 @@ def process_video(landmarker, video_path, save_path, fps):
         print(f"  [ERROR] 视频无帧: {video_path}")
         return 0, False
 
-    sequence = np.stack(frames, axis=0)  # (T, 84)
+    sequence = np.stack(frames, axis=0)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(str(save_path), sequence)
     return len(frames), True
@@ -132,7 +123,7 @@ def load_label_map(split):
     return label_map
 
 
-def run_split(split, max_videos=None):
+def run_split(split, max_videos, landmarker):
     label_map = load_label_map(split)
     save_dir = KEYPOINT_DIR / split
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -168,17 +159,7 @@ def run_split(split, max_videos=None):
             errors += 1
             continue
 
-        # 创建新 landmarker（时间戳需从 0 开始）
-        landmarker = create_landmarker()
-
-        # 用实际视频的 fps
-        cap = cv2.VideoCapture(str(video_path))
-        actual_fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        ref_fps = actual_fps if actual_fps > 0 else 25.0
-
-        n_frames, ok = process_video(landmarker, video_path, save_path, ref_fps)
-        landmarker.close()
+        n_frames, ok = process_video(landmarker, video_path, save_path)
         processed += 1
 
         elapsed = time.time() - start_time
@@ -199,6 +180,7 @@ def main():
     args = parser.parse_args()
 
     print(f"加载模型: {MODEL_PATH}")
+    landmarker = create_landmarker()
 
     splits = ["train", "dev", "test"] if args.split == "all" else [args.split]
 
@@ -207,10 +189,12 @@ def main():
     total_errors = 0
 
     for split in splits:
-        p, s, e = run_split(split, args.max_videos)
+        p, s, e = run_split(split, args.max_videos, landmarker)
         total_processed += p
         total_skipped += s
         total_errors += e
+
+    landmarker.close()
 
     print(f"\n{'='*60}")
     print(f"全部完成: {total_processed} 处理, {total_skipped} 跳过, {total_errors} 错误")

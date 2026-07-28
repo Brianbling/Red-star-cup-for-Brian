@@ -44,6 +44,9 @@ Thumbs.db
 # 空目录
 checkpoints/
 
+# Claude 工作树
+.claude/worktrees/
+
 # 临时 / 日志
 *.log
 YOLOv8/mnist_jpg/
