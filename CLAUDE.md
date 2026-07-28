@@ -110,7 +110,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 |----|---------|------|
 | git init + .gitignore + 首次 commit | 现在 | **已完成** (2026-07-28) |
 | pyproject.toml（替换 requirements.txt） | 现在 | **待处理** |
-| README.md（从 CLAUDE.md 精简"怎么跑"） | Phase 4 完成后 | 待处理 |
+| README.md（从 CLAUDE.md 精简"怎么跑"） | Phase 4 完成后 | **已完成** (2026-07-28) |
 | 测试（预处理格式/模型 shape/CTC 解码） | 对应模块写完 | 待处理 |
 | config.yaml（全局配置，替代路径硬编码） | 模块文件到 3+ 时 | 待处理 |
 | CI（GitHub Actions 自动测试） | 准备发布/交接时 | 待处理 |
