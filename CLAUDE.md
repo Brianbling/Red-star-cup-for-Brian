@@ -67,12 +67,12 @@ D:/red star project/
 
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
-- MediaPipe Hands（pip 已装）
-- TFNet `BiLSTM.py`（2 层双向 LSTM，直接复用）
-- TFNet `Train.py`（训练循环框架，可复用）
-- TFNet `DataProcessMoudle.py`（标签解析，可复用）
-- TFNet `WER.py`（词错误率评估，完整复用）
-- ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定）
+- MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
+- `src/model.py` — 1D Conv + BiLSTM + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
+- `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
+- TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
+- ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定，未使用）
 
 ### 旁路（静态手势）— 数据齐全
 - CSL_basic_dataset（235 个中国手语单词视频，文件名即标签）
@@ -139,15 +139,15 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 | 模块 | 方式 | 代码量 | 说明 |
 |------|------|--------|------|
-| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.solutions.hands` |
+| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
 | YOLOv8n 分类训练 | 调 API | 数据准备 ~100 行 | `ultralytics`, `model.train()` |
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
-| BiLSTM | 复用 TFNet | 0 行 | 直接 import |
-| 视频→关键点预处理 | **自己写** | ~150 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
-| 模型架构 model.py | **自己写** | ~80 行 | 1D Conv + BiLSTM + Linear，标准层 |
-| Dataset/DataLoader | **自己写** | ~120 行 | 读 .npy + 标签解析 + collate_fn |
-| 训练脚本 | **自己写** | ~100 行 | 复用 Train.py 框架，CTC Loss 替换 |
-| CTC 贪心解码 | **自己写** | ~30 行 | argmax + 去重 + 去 blank |
+| BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
+| 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
+| 模型架构 model.py | **自己写** | ~50 行 | 1D Conv + BiLSTM + Linear |
+| Dataset/DataLoader | **自己写** | ~90 行 | 读 .npy + 标签解析 + collate_fn |
+| 训练脚本 | **自己写** | ~180 行 | 独立实现，未复用 TFNet Train.py |
+| CTC 贪心解码 | **自己写** | ~40 行 | argmax + unique_consecutive + 去 blank |
 | 滑动窗口 | **自己写** | ~30 行 | deque 封装 |
 | 融合仲裁状态机 | **自己写** | ~150 行 | 纯逻辑，分支多 |
 | 推理主循环 | **自己写** | ~150 行 | 摄像头 + 串模块 + 显示 |
@@ -168,3 +168,80 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 6 | 系统联调测试（功能 + 延迟 + 场景） | 3-4h | CPU + 摄像头 |
 
 **执行顺序**：Phase 0 → Phase 1（挂机）→ Phase 2（挂机，同时做 Phase 3）→ Phase 4 → Phase 5 → Phase 6
+
+## 当前进度
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| 0 | 环境搭建 | **已完成** (2026-07-28) |
+| 1 | 关键点预处理 | **进行中** (train 2485/4972, dev/test 排队) |
+| 2 | 模型训练 | 代码完成，待 Phase 1 完成后启动 |
+| 3 | CTC 解码 | 代码完成（src/decode.py） |
+| 4 | 实时推理管线 | 待开始 |
+| 5 | 旁路 YOLO | 待开始 |
+| 6 | 联调测试 | 待开始 |
+
+## 工作流治理（防幻觉与决策一致性）
+
+### 1. 权威文档层级
+
+每个新会话开始后，**在做任何代码修改前**，必须先读下列文件建立认知基线：
+
+| 文档 | 角色 | 说明 |
+|------|------|------|
+| `ARCHITECTURE.md` | **架构权威** | 管线、模块边界、参数默认值 |
+| `CLAUDE.md` | **入口指南** | 目录结构、环境、约束、进度 |
+| `CHANGELOG.md` | **事实记录** | 发生过什么、为什么这样决定 |
+| `IMPLEMENTATION.md` | **计划参考** | 预估但非权威，实际以代码为准 |
+| `.claude/INSPIRATION.md` | **外部启发** | 待讨论，未采纳，不要直接实现 |
+
+**冲突裁决规则**：代码 > CHANGELOG > ARCHITECTURE.md > IMPLEMENTATION.md。如果 CLAUDE.md 与代码/CHANGELOG 矛盾，CLAUDE.md 是错的，立即修正。
+
+### 2. 出方案前的检查清单
+
+每个实现方案必须检查：
+
+```
+□ 是否违反 v1 约束？（语言模型/beam search/Holistic/近形混淆 → 直接拒绝）
+□ 引用的文件/函数/路径是否存在？（不靠记忆，用查找工具验证）
+□ 是否重走了已知死胡同？（读 CHANGELOG.md 找类似尝试）
+□ 是否在"待讨论"列表里？（读 INSPIRATION.md，未采纳的不动）
+□ 修改范围是否超过了任务要求？（只改必要的，不同时重构不相关代码）
+```
+
+### 3. 已知错误模式（Landmines — 新会话容易踩的坑）
+
+| 陷阱 | 错误认知 | 正确事实 |
+|------|---------|---------|
+| TFNet 复用 | "TFNet BiLSTM.py/Train.py/DataProcessMoudle.py 被复用" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
+| MediaPipe API | "用 `mp.solutions.hands`" | 已迁移到 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
+| 词表大小 | "~500-1000 词" | 3515 tokens（vocab.json） |
+| 模型参数 | "~5M" | 13.1M |
+| 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/` |
+| 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
+| 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
+| ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
+
+### 4. 编辑约束
+
+- **不要改 `src/` 以外的已有代码**（TFNet-main/、YOLOv8/ 等第三方代码）
+- **不要创建 CLAUDE.md 以外的 .md 文件**，除非用户明确要求
+- **新增依赖必须记录到 requirements.txt 和 CHANGELOG.md**
+- **每个 commit 后检查 `git status` 确认干净**
+- **修改前先读文件，修改后不重读验证**（工具会报错即为失败）
+- **不写注释，除非 WHY 不显而易见**
+- **不设计文档，不改计划文件，不问"要不要汇报"**
+- **外部启发先入 INSPIRATION.md，不直接实现**
+
+### 5. 决策记录格式
+
+每次做出非显而易见的工程决策后，在 CHANGELOG.md 记录 **为什么** 而不是 **是什么**：
+
+```
+# 正确
+MediaPipe IMAGE 模式替代 VIDEO 模式：VIDEO 每 ~100s 触发 Google 遥测超时 ~45s（被墙），
+实测 IMAGE vs VIDEO 一致性 99.5%，选 IMAGE。
+
+# 错误
+MediaPipe 切到 IMAGE 模式。
+```
