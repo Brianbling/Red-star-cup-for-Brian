@@ -4,7 +4,7 @@
 中国手语（CSL）实时连续识别。摄像头视频流输入 → 手语文本实时输出。
 
 ## 系统架构
-详见 `ARCHITECTURE.md`。核心管线：
+详见 `docs/permanent/ARCHITECTURE.md`。核心管线：
 
 ```
 摄像头 → 统一预处理 → MediaPipe Hands (42点关键点)
@@ -18,38 +18,69 @@
 
 **融合仲裁层**：速度门控 + 防抖计时器 + 三态状态机（动态/静默/缓冲）。
 
+## 项目文件索引
+
+根目录只保留 `CLAUDE.md`。其他 Markdown 按生命周期放入 `docs/`。
+
+| 文件 | 类型 | 用途 | 何时读 |
+|------|------|------|--------|
+| `CLAUDE.md` | 入口 | 治理规则、目录结构、约束 | **每次会话必读** |
+| `docs/permanent/ARCHITECTURE.md` | 永久 | 系统架构设计 | 修改模型/管线时 |
+| `docs/permanent/IMPLEMENTATION.md` | 永久 | 实现计划 | 设计决策时 |
+| `docs/permanent/INSPIRATION.md` | 永久 | 23 条灵感、优先级投票 | 设计决策时 |
+| `docs/permanent/CHANGELOG.md` | 永久 | 工作日志，持续追加 | 了解历史决策时 |
+| `docs/temporary/` | 临时 | 当前活跃的实验路线/诊断 | 按需读取 |
+
+**规则**：新增临时文档 → 索引加一行。临时文档过期 → 删除文件 + 从索引移除。
+
 ## 目录结构
 
 ```
 D:/red star project/
-├── ARCHITECTURE.md           # 系统架构设计文档（权威参考）
-├── CLAUDE.md                 # 项目说明
-├── IMPLEMENTATION.md         # 实现计划
-├── CHANGELOG.md              # 工作日志
+├── CLAUDE.md                 # 项目入口（本文件）
 ├── README.md                 # 项目概览
 ├── requirements.txt          # Python 依赖
 ├── vocab.json                # 词表（build_vocab.py 生成，3515 tokens）
+├── vocab_top478.json         # 子词表（top-478 高频词，快速验证用）
+├── docs/                     # 项目文档（除 CLAUDE.md 外所有 md）
+│   ├── permanent/            # 永久保留，始终与代码同步
+│   │   ├── ARCHITECTURE.md   # 系统架构设计文档（权威参考）
+│   │   ├── IMPLEMENTATION.md # 实现计划
+│   │   ├── INSPIRATION.md    # 23 条灵感、优先级投票
+│   │   └── CHANGELOG.md      # 工作日志，持续追加
+│   └── temporary/            # 实验路线/诊断，过期后删除
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv + BiLSTM + Linear
-│   ├── dataset.py            # KeypointDataset + collate_fn
-│   ├── train.py              # CTC Loss 训练脚本
+│   ├── model.py              # 1D Conv(stride=2×2) + BiLSTM + Linear + LogSoftmax
+│   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
+│   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
 │   └── decode.py             # CTC 贪心解码 + 后处理
-├── TFNet-main/               # 原 TFNet，复用 BiLSTM.py、WER.py 等
-│   └── params/config.ini     # 原配置（Linux 路径已过时，不直接使用）
+├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
-│   ├── video/{train,dev,test}/  # 6000 条视频 (.mp4)
+│   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
 │   ├── label/{train,dev,test}.csv
-│   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)
+│   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)，5987 文件
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
+├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续
 ├── YOLOv8/                   # YOLOv8，已有 MNIST demo，待改造为静态手势分类
 ├── ASL Alphabet/             # 美式手语字母数据集
-├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库
+├── L1290/                    # C382 手势手语数据
+├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（未编译）
 ├── models/                   # 模型文件
 │   └── hand_landmarker.task  # MediaPipe Hand Landmarker (~7.6MB)
-└── checkpoints/              # 模型权重保存目录
+├── checkpoints/              # 模型权重保存目录
+│   ├── best.pt               # 当前最佳 WER 权重
+│   └── last.pt               # 最近 epoch 权重
+├── reference/                # 代码参考项目（只读，不修改）
+│   ├── wenet-main/           # 流式 ASR 生产框架
+│   ├── espnet-master/        # 流式 ASR 研究框架
+│   ├── landmark-extraction-main/  # 手语关键点提取工具链
+│   ├── slt-master/           # 手语翻译项目 (SignJoey)
+│   ├── slt_how2sign_wicv2023-wicv23/  # How2Sign 翻译基线
+│   └── k2-master/            # FSA/FST 语音识别框架
+└── arguement/                # 相关论文（PDF + txt）
 ```
 
 ## 技术栈与环境
@@ -97,7 +128,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 ## 推理流程（实时）
 
-按 `ARCHITECTURE.md` 管线实现。核心模块：
+按 `docs/permanent/ARCHITECTURE.md` 管线实现。核心模块：
 1. `preprocess.py` — 预处理 + MediaPipe Hands + 置信度清洗 + 坐标归一化
 2. `window.py` — 滑动窗口（3s/90帧 deque）
 3. `arbitration.py` — 融合仲裁状态机
@@ -112,8 +143,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 - 推理和训练代码分开
 - batch_size 固定为 1（序列长度不一致）
 - 标签 Gloss 按 `/` 分割，空项过滤
-- **每完成一个 Phase/子任务，必须更新 `CHANGELOG.md`（工作日志）和 `CLAUDE.md`（如目录结构/环境版本变化）**，便于后续开发者追溯
-- **阅读外部项目/论文/代码库发现有价值的架构模式或工程技巧时，记录到 `.claude/INSPIRATION.md`**（启发日志），包含来源、核心思路、好处/代价、适用时机、讨论状态
+- **每完成一个 Phase/子任务，必须更新 `docs/permanent/CHANGELOG.md`（工作日志）和 `CLAUDE.md`（如目录结构/环境版本变化）**，便于后续开发者追溯
 - **多轮思考无进展时立即停止，报告遇到的问题**，不要反复尝试相同方案
 - **以下规范事项应提示用户，每次完成后更新状态**
 
@@ -132,14 +162,14 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 ## 实现计划
 
-详见 `IMPLEMENTATION.md`。总计约 30-50h。
+详见 `docs/permanent/IMPLEMENTATION.md`。总计约 30-50h。
 
 
 ### 实际工作量（调 API vs 自己写）
 
 | 模块 | 方式 | 代码量 | 说明 |
 |------|------|--------|------|
-| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
+| MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.solutions.hands` |
 | YOLOv8n 分类训练 | 调 API | 数据准备 ~100 行 | `ultralytics`, `model.train()` |
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
 | BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
@@ -169,18 +199,6 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 **执行顺序**：Phase 0 → Phase 1（挂机）→ Phase 2（挂机，同时做 Phase 3）→ Phase 4 → Phase 5 → Phase 6
 
-## 当前进度
-
-| Phase | 内容 | 状态 |
-|-------|------|------|
-| 0 | 环境搭建 | **已完成** (2026-07-28) |
-| 1 | 关键点预处理 | **进行中** (train 2485/4972, dev/test 排队) |
-| 2 | 模型训练 | 代码完成，待 Phase 1 完成后启动 |
-| 3 | CTC 解码 | 代码完成（src/decode.py） |
-| 4 | 实时推理管线 | 待开始 |
-| 5 | 旁路 YOLO | 待开始 |
-| 6 | 联调测试 | 待开始 |
-
 ## 工作流治理（防幻觉与决策一致性）
 
 ### 1. 权威文档层级
@@ -189,11 +207,11 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 | 文档 | 角色 | 说明 |
 |------|------|------|
-| `ARCHITECTURE.md` | **架构权威** | 管线、模块边界、参数默认值 |
+| `docs/permanent/ARCHITECTURE.md` | **架构权威** | 管线、模块边界、参数默认值 |
 | `CLAUDE.md` | **入口指南** | 目录结构、环境、约束、进度 |
-| `CHANGELOG.md` | **事实记录** | 发生过什么、为什么这样决定 |
-| `IMPLEMENTATION.md` | **计划参考** | 预估但非权威，实际以代码为准 |
-| `.claude/INSPIRATION.md` | **外部启发** | 待讨论，未采纳，不要直接实现 |
+| `docs/permanent/CHANGELOG.md` | **事实记录** | 发生过什么、为什么这样决定 |
+| `docs/permanent/IMPLEMENTATION.md` | **计划参考** | 预估但非权威，实际以代码为准 |
+| `docs/permanent/INSPIRATION.md` | **外部启发** | 待讨论，未采纳，不要直接实现 |
 
 **冲突裁决规则**：代码 > CHANGELOG > ARCHITECTURE.md > IMPLEMENTATION.md。如果 CLAUDE.md 与代码/CHANGELOG 矛盾，CLAUDE.md 是错的，立即修正。
 
@@ -221,21 +239,24 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
 | 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
 | ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
+| CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。T/L=68:1 是根本原因 |
+| SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
+| FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
 
 ### 4. 编辑约束
 
 - **不要改 `src/` 以外的已有代码**（TFNet-main/、YOLOv8/ 等第三方代码）
 - **不要创建 CLAUDE.md 以外的 .md 文件**，除非用户明确要求
-- **新增依赖必须记录到 requirements.txt 和 CHANGELOG.md**
+- **新增依赖必须记录到 requirements.txt 和 docs/permanent/CHANGELOG.md**
 - **每个 commit 后检查 `git status` 确认干净**
 - **修改前先读文件，修改后不重读验证**（工具会报错即为失败）
 - **不写注释，除非 WHY 不显而易见**
-- **不设计文档，不改计划文件，不问"要不要汇报"**
-- **外部启发先入 INSPIRATION.md，不直接实现**
+- **不设计文档，不改计划文件，多问"要不要汇报"**
+- **外部启发先入 docs/permanent/INSPIRATION.md，不直接实现**
 
 ### 5. 决策记录格式
 
-每次做出非显而易见的工程决策后，在 CHANGELOG.md 记录 **为什么** 而不是 **是什么**：
+每次做出非显而易见的工程决策后，在 `docs/permanent/CHANGELOG.md` 记录 **为什么** 而不是 **是什么**：
 
 ```
 # 正确
