@@ -23,33 +23,45 @@
 ```
 D:/red star project/
 ├── ARCHITECTURE.md           # 系统架构设计文档（权威参考）
-├── CLAUDE.md                 # 项目说明
+├── CLAUDE.md                 # 项目说明（本文件）
 ├── IMPLEMENTATION.md         # 实现计划
 ├── CHANGELOG.md              # 工作日志
 ├── README.md                 # 项目概览
 ├── requirements.txt          # Python 依赖
 ├── vocab.json                # 词表（build_vocab.py 生成，3515 tokens）
+├── vocab_top478.json         # 子词表（top-478 高频词，快速验证用）
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv + BiLSTM + Linear
-│   ├── dataset.py            # KeypointDataset + collate_fn
-│   ├── train.py              # CTC Loss 训练脚本
+│   ├── model.py              # 1D Conv(stride=2×2) + BiLSTM + Linear + LogSoftmax
+│   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
+│   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
 │   └── decode.py             # CTC 贪心解码 + 后处理
-├── TFNet-main/               # 原 TFNet，复用 BiLSTM.py、WER.py 等
-│   └── params/config.ini     # 原配置（Linux 路径已过时，不直接使用）
+├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
-│   ├── video/{train,dev,test}/  # 6000 条视频 (.mp4)
+│   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
 │   ├── label/{train,dev,test}.csv
-│   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)
+│   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)，5987 文件
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
+├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续
 ├── YOLOv8/                   # YOLOv8，已有 MNIST demo，待改造为静态手势分类
 ├── ASL Alphabet/             # 美式手语字母数据集
-├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库
+├── L1290/                    # C382 手势手语数据
+├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（未编译）
 ├── models/                   # 模型文件
 │   └── hand_landmarker.task  # MediaPipe Hand Landmarker (~7.6MB)
-└── checkpoints/              # 模型权重保存目录
+├── checkpoints/              # 模型权重保存目录
+│   ├── best.pt               # 当前最佳 WER 权重
+│   └── last.pt               # 最近 epoch 权重
+├── reference/                # 代码参考项目（只读，不修改）
+│   ├── wenet-main/           # 流式 ASR 生产框架
+│   ├── espnet-master/        # 流式 ASR 研究框架
+│   ├── landmark-extraction-main/  # 手语关键点提取工具链
+│   ├── slt-master/           # 手语翻译项目 (SignJoey)
+│   ├── slt_how2sign_wicv2023-wicv23/  # How2Sign 翻译基线
+│   └── k2-master/            # FSA/FST 语音识别框架
+└── arguement/                # 相关论文（PDF + txt）
 ```
 
 ## 技术栈与环境
@@ -67,12 +79,12 @@ D:/red star project/
 
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
-- MediaPipe Hands（pip 已装）
-- TFNet `BiLSTM.py`（2 层双向 LSTM，直接复用）
-- TFNet `Train.py`（训练循环框架，可复用）
-- TFNet `DataProcessMoudle.py`（标签解析，可复用）
-- TFNet `WER.py`（词错误率评估，完整复用）
-- ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定）
+- MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
+- `src/model.py` — 1D Conv + BiLSTM + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
+- `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
+- TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
+- ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定，未使用）
 
 ### 旁路（静态手势）— 数据齐全
 - CSL_basic_dataset（235 个中国手语单词视频，文件名即标签）
