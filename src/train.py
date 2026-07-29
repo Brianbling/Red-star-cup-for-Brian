@@ -1,9 +1,11 @@
 """
 主路模型训练脚本。
-用法: python train.py
+用法: python train.py                    # 全量词表(3515)
+       python train.py --vocab vocab_top478.json  # 子词表快速验证
 """
 import json
 import sys
+import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -42,16 +44,21 @@ def compute_wer(pred_texts, label_texts):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vocab", type=str, default="vocab.json",
+                        help="词表文件（默认 vocab.json，快速验证用 vocab_top478.json）")
+    args = parser.parse_args()
+
     seed_torch(0)
 
-    with open(BASE_DIR / "vocab.json", "r", encoding="utf-8") as f:
+    with open(BASE_DIR / args.vocab, "r", encoding="utf-8") as f:
         vocab = json.load(f)
     word2idx = vocab["word2idx"]
     idx2word = vocab["idx2word"]
     vocab_size = len(idx2word)
     blank = word2idx["<blank>"]
 
-    print(f"词表大小: {vocab_size}, blank={blank}")
+    print(f"词表: {args.vocab}, 大小: {vocab_size}, blank={blank}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"设备: {device}")
