@@ -13,8 +13,8 @@ class SLRModel(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv1d(input_dim, conv_dim, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.BatchNorm1d(conv_dim),
         )
+        self.layer_norm = nn.LayerNorm(conv_dim)
         self.lstm = nn.LSTM(
             input_size=conv_dim,
             hidden_size=hidden_size,
@@ -35,7 +35,9 @@ class SLRModel(nn.Module):
         # Conv1d 需要 (B, C, T)
         x = x.permute(1, 2, 0)  # (B, input_dim, T)
         x = self.conv(x)         # (B, conv_dim, T)
-        x = x.permute(2, 0, 1)  # (T, B, conv_dim)
+        x = x.permute(0, 2, 1)  # (B, T, conv_dim) for LayerNorm
+        x = self.layer_norm(x)
+        x = x.permute(1, 0, 2)  # (T, B, conv_dim)
 
         # pack → LSTM → unpack
         packed = nn.utils.rnn.pack_padded_sequence(x, input_lengths.cpu(),

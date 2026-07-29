@@ -9,6 +9,29 @@ import numpy as np
 from pathlib import Path
 
 
+def _clean_word(word):
+    """移除括号内容、首尾标点、尾部数字（与 build_vocab.py 保持一致）。"""
+    chars = list(word)
+    result = []
+    skip = False
+    for c in chars:
+        if c in "(（[{（":
+            skip = True
+            continue
+        if c in ")）]}）":
+            skip = False
+            continue
+        if not skip:
+            result.append(c)
+    word = "".join(result).strip()
+    if not word:
+        return word
+    if word[-1].isdigit() and not word[0].isdigit():
+        word = word.rstrip("0123456789")
+    word = word.strip()
+    return word
+
+
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx):
         self.base_dir = Path(base_dir)
@@ -37,7 +60,7 @@ class KeypointDataset(Dataset):
     def _gloss_to_ids(self, gloss):
         ids = []
         for w in gloss.split("/"):
-            w = w.strip()
+            w = _clean_word(w)
             if w and w in self.word2idx:
                 ids.append(self.word2idx[w])
         return ids
