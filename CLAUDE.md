@@ -4,7 +4,7 @@
 中国手语（CSL）实时连续识别。摄像头视频流输入 → 手语文本实时输出。
 
 ## 系统架构
-详见 `ARCHITECTURE.md`。核心管线：
+详见 `docs/permanent/ARCHITECTURE.md`。核心管线：
 
 ```
 摄像头 → 统一预处理 → MediaPipe Hands (42点关键点)
@@ -18,18 +18,37 @@
 
 **融合仲裁层**：速度门控 + 防抖计时器 + 三态状态机（动态/静默/缓冲）。
 
+## 项目文件索引
+
+根目录只保留 `CLAUDE.md`。其他 Markdown 按生命周期放入 `docs/`。
+
+| 文件 | 类型 | 用途 | 何时读 |
+|------|------|------|--------|
+| `CLAUDE.md` | 入口 | 治理规则、目录结构、约束 | **每次会话必读** |
+| `docs/permanent/ARCHITECTURE.md` | 永久 | 系统架构设计 | 修改模型/管线时 |
+| `docs/permanent/IMPLEMENTATION.md` | 永久 | 实现计划 | 设计决策时 |
+| `docs/permanent/INSPIRATION.md` | 永久 | 23 条灵感、优先级投票 | 设计决策时 |
+| `docs/permanent/CHANGELOG.md` | 永久 | 工作日志，持续追加 | 了解历史决策时 |
+| `docs/temporary/` | 临时 | 当前活跃的实验路线/诊断 | 按需读取 |
+
+**规则**：新增临时文档 → 索引加一行。临时文档过期 → 删除文件 + 从索引移除。
+
 ## 目录结构
 
 ```
 D:/red star project/
-├── ARCHITECTURE.md           # 系统架构设计文档（权威参考）
-├── CLAUDE.md                 # 项目说明（本文件）
-├── IMPLEMENTATION.md         # 实现计划
-├── CHANGELOG.md              # 工作日志
+├── CLAUDE.md                 # 项目入口（本文件）
 ├── README.md                 # 项目概览
 ├── requirements.txt          # Python 依赖
 ├── vocab.json                # 词表（build_vocab.py 生成，3515 tokens）
 ├── vocab_top478.json         # 子词表（top-478 高频词，快速验证用）
+├── docs/                     # 项目文档（除 CLAUDE.md 外所有 md）
+│   ├── permanent/            # 永久保留，始终与代码同步
+│   │   ├── ARCHITECTURE.md   # 系统架构设计文档（权威参考）
+│   │   ├── IMPLEMENTATION.md # 实现计划
+│   │   ├── INSPIRATION.md    # 23 条灵感、优先级投票
+│   │   └── CHANGELOG.md      # 工作日志，持续追加
+│   └── temporary/            # 实验路线/诊断，过期后删除
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
@@ -109,7 +128,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 ## 推理流程（实时）
 
-按 `ARCHITECTURE.md` 管线实现。核心模块：
+按 `docs/permanent/ARCHITECTURE.md` 管线实现。核心模块：
 1. `preprocess.py` — 预处理 + MediaPipe Hands + 置信度清洗 + 坐标归一化
 2. `window.py` — 滑动窗口（3s/90帧 deque）
 3. `arbitration.py` — 融合仲裁状态机
@@ -124,7 +143,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 - 推理和训练代码分开
 - batch_size 固定为 1（序列长度不一致）
 - 标签 Gloss 按 `/` 分割，空项过滤
-- **每完成一个 Phase/子任务，必须更新 `CHANGELOG.md`（工作日志）和 `CLAUDE.md`（如目录结构/环境版本变化）**，便于后续开发者追溯
+- **每完成一个 Phase/子任务，必须更新 `docs/permanent/CHANGELOG.md`（工作日志）和 `CLAUDE.md`（如目录结构/环境版本变化）**，便于后续开发者追溯
 - **多轮思考无进展时立即停止，报告遇到的问题**，不要反复尝试相同方案
 - **以下规范事项应提示用户，每次完成后更新状态**
 
@@ -143,7 +162,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 ## 实现计划
 
-详见 `IMPLEMENTATION.md`。总计约 30-50h。
+详见 `docs/permanent/IMPLEMENTATION.md`。总计约 30-50h。
 
 
 ### 实际工作量（调 API vs 自己写）
@@ -153,12 +172,12 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.solutions.hands` |
 | YOLOv8n 分类训练 | 调 API | 数据准备 ~100 行 | `ultralytics`, `model.train()` |
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
-| BiLSTM | 复用 TFNet | 0 行 | 直接 import |
-| 视频→关键点预处理 | **自己写** | ~150 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
-| 模型架构 model.py | **自己写** | ~80 行 | 1D Conv + BiLSTM + Linear，标准层 |
-| Dataset/DataLoader | **自己写** | ~120 行 | 读 .npy + 标签解析 + collate_fn |
-| 训练脚本 | **自己写** | ~100 行 | 复用 Train.py 框架，CTC Loss 替换 |
-| CTC 贪心解码 | **自己写** | ~30 行 | argmax + 去重 + 去 blank |
+| BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
+| 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
+| 模型架构 model.py | **自己写** | ~50 行 | 1D Conv + BiLSTM + Linear |
+| Dataset/DataLoader | **自己写** | ~90 行 | 读 .npy + 标签解析 + collate_fn |
+| 训练脚本 | **自己写** | ~180 行 | 独立实现，未复用 TFNet Train.py |
+| CTC 贪心解码 | **自己写** | ~40 行 | argmax + unique_consecutive + 去 blank |
 | 滑动窗口 | **自己写** | ~30 行 | deque 封装 |
 | 融合仲裁状态机 | **自己写** | ~150 行 | 纯逻辑，分支多 |
 | 推理主循环 | **自己写** | ~150 行 | 摄像头 + 串模块 + 显示 |
@@ -179,3 +198,71 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 6 | 系统联调测试（功能 + 延迟 + 场景） | 3-4h | CPU + 摄像头 |
 
 **执行顺序**：Phase 0 → Phase 1（挂机）→ Phase 2（挂机，同时做 Phase 3）→ Phase 4 → Phase 5 → Phase 6
+
+## 工作流治理（防幻觉与决策一致性）
+
+### 1. 权威文档层级
+
+每个新会话开始后，**在做任何代码修改前**，必须先读下列文件建立认知基线：
+
+| 文档 | 角色 | 说明 |
+|------|------|------|
+| `docs/permanent/ARCHITECTURE.md` | **架构权威** | 管线、模块边界、参数默认值 |
+| `CLAUDE.md` | **入口指南** | 目录结构、环境、约束、进度 |
+| `docs/permanent/CHANGELOG.md` | **事实记录** | 发生过什么、为什么这样决定 |
+| `docs/permanent/IMPLEMENTATION.md` | **计划参考** | 预估但非权威，实际以代码为准 |
+| `docs/permanent/INSPIRATION.md` | **外部启发** | 待讨论，未采纳，不要直接实现 |
+
+**冲突裁决规则**：代码 > CHANGELOG > ARCHITECTURE.md > IMPLEMENTATION.md。如果 CLAUDE.md 与代码/CHANGELOG 矛盾，CLAUDE.md 是错的，立即修正。
+
+### 2. 出方案前的检查清单
+
+每个实现方案必须检查：
+
+```
+□ 是否违反 v1 约束？（语言模型/beam search/Holistic/近形混淆 → 直接拒绝）
+□ 引用的文件/函数/路径是否存在？（不靠记忆，用查找工具验证）
+□ 是否重走了已知死胡同？（读 CHANGELOG.md 找类似尝试）
+□ 是否在"待讨论"列表里？（读 INSPIRATION.md，未采纳的不动）
+□ 修改范围是否超过了任务要求？（只改必要的，不同时重构不相关代码）
+```
+
+### 3. 已知错误模式（Landmines — 新会话容易踩的坑）
+
+| 陷阱 | 错误认知 | 正确事实 |
+|------|---------|---------|
+| TFNet 复用 | "TFNet BiLSTM.py/Train.py/DataProcessMoudle.py 被复用" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
+| MediaPipe API | "用 `mp.solutions.hands`" | 已迁移到 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
+| 词表大小 | "~500-1000 词" | 3515 tokens（vocab.json） |
+| 模型参数 | "~5M" | 13.1M |
+| 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/` |
+| 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
+| 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
+| ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
+| CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。T/L=68:1 是根本原因 |
+| SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
+| FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
+
+### 4. 编辑约束
+
+- **不要改 `src/` 以外的已有代码**（TFNet-main/、YOLOv8/ 等第三方代码）
+- **不要创建 CLAUDE.md 以外的 .md 文件**，除非用户明确要求
+- **新增依赖必须记录到 requirements.txt 和 docs/permanent/CHANGELOG.md**
+- **每个 commit 后检查 `git status` 确认干净**
+- **修改前先读文件，修改后不重读验证**（工具会报错即为失败）
+- **不写注释，除非 WHY 不显而易见**
+- **不设计文档，不改计划文件，多问"要不要汇报"**
+- **外部启发先入 docs/permanent/INSPIRATION.md，不直接实现**
+
+### 5. 决策记录格式
+
+每次做出非显而易见的工程决策后，在 `docs/permanent/CHANGELOG.md` 记录 **为什么** 而不是 **是什么**：
+
+```
+# 正确
+MediaPipe IMAGE 模式替代 VIDEO 模式：VIDEO 每 ~100s 触发 Google 遥测超时 ~45s（被墙），
+实测 IMAGE vs VIDEO 一致性 99.5%，选 IMAGE。
+
+# 错误
+MediaPipe 切到 IMAGE 模式。
+```
