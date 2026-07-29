@@ -17,11 +17,12 @@ BASE_DIR = Path("D:/red star project")
 KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
 
-sys.path.insert(0, str(BASE_DIR / "TFNet-main"))
+sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
 
 from model import SLRModel
 from dataset import KeypointDataset, collate_fn
-from decode import ctc_greedy_decode, ctc_decode_text
+from decode import ctc_greedy_decode
 
 
 def seed_torch(seed=0):
