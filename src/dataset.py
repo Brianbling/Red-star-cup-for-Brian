@@ -1,12 +1,17 @@
 """
 CE-CSL 关键点 Dataset / DataLoader。
 读取预处理的 .npy 关键点文件 + CSV 标签，返回 (T, 84) tensor + token ids。
+包含：坐标归一化（手部跨度）、clean_word 标签清洗、NaN 缺失语义。
 """
 import csv
+import json
 import torch
 from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
+
+GLOBAL_FALLBACK_SCALE = 0.065
+EPSILON = 1e-8
 
 
 def _clean_word(word):
@@ -32,12 +37,61 @@ def _clean_word(word):
     return word
 
 
+def _compute_video_scale(kp_array):
+    """
+    计算每视频归一化 scale = 中位手部跨度（手腕 → 中指 MCP 距离）。
+    kp_array: (T, 84) float32，NaN 表示缺失关键点，0.0 表示 legacy 零值。
+    返回单一浮点数 scale。
+    """
+    spans = []
+    for hand_offset in [0, 42]:  # 左手, 右手
+        wrist = kp_array[:, hand_offset:hand_offset + 2]            # landmark 0
+        middle_mcp = kp_array[:, hand_offset + 18:hand_offset + 20]  # landmark 9
+
+        wrist_valid = ~np.all(wrist == 0, axis=1) & ~np.all(np.isnan(wrist), axis=1)
+        mcp_valid = ~np.all(middle_mcp == 0, axis=1) & ~np.all(np.isnan(middle_mcp), axis=1)
+        valid = wrist_valid & mcp_valid
+
+        if valid.any():
+            dists = np.linalg.norm(wrist[valid] - middle_mcp[valid], axis=1)
+            spans.append(np.median(dists))
+
+    if spans:
+        return max(float(np.median(spans)), EPSILON)
+    return GLOBAL_FALLBACK_SCALE
+
+
+def _load_video_scales(keypoint_dir, split):
+    """加载或计算 per-video scale 缓存。返回 {video_id: scale_float}。"""
+    cache_path = Path(keypoint_dir) / f"{split}_scales.json"
+    if cache_path.exists():
+        with open(cache_path, "r") as f:
+            return json.load(f)
+
+    split_dir = Path(keypoint_dir) / split
+    scales = {}
+    for npy_path in sorted(split_dir.glob("*.npy")):
+        video_id = npy_path.stem
+        kp = np.load(str(npy_path))
+        scales[video_id] = _compute_video_scale(kp)
+
+    with open(cache_path, "w") as f:
+        json.dump(scales, f)
+
+    print(f"  Computed & cached scales for {len(scales)} videos -> {cache_path}")
+    return scales
+
+
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx):
         self.base_dir = Path(base_dir)
         self.keypoint_dir = self.base_dir / "keypoints" / split
         self.word2idx = word2idx
         self.samples = []  # [(video_id, token_ids)]
+
+        self.video_scales = _load_video_scales(
+            self.base_dir / "keypoints", split
+        )
 
         label_path = self.base_dir / "label" / f"{split}.csv"
         with open(label_path, "r", encoding="utf-8") as f:
@@ -50,7 +104,6 @@ class KeypointDataset(Dataset):
                 token_ids = self._gloss_to_ids(gloss)
                 if len(token_ids) == 0:
                     continue
-                # 跳过不存在视频的孤立行
                 if video_id == "train-01418":
                     continue
                 npy_path = self.keypoint_dir / f"{video_id}.npy"
@@ -71,7 +124,15 @@ class KeypointDataset(Dataset):
     def __getitem__(self, index):
         video_id, token_ids = self.samples[index]
         npy_path = self.keypoint_dir / f"{video_id}.npy"
-        kp = np.load(str(npy_path))  # (T, 84)
+        kp = np.load(str(npy_path))  # (T, 84), may contain NaN
+
+        # Layer 2: NaN → 0.0（模型看到干净的零值）
+        kp = np.nan_to_num(kp, nan=0.0)
+
+        # 手腕平移 + 手部跨度归一化
+        scale = self.video_scales.get(video_id, GLOBAL_FALLBACK_SCALE)
+        kp = kp / scale
+
         kp = torch.from_numpy(kp).float()
         return {
             "keypoints": kp,          # (T, 84)
@@ -81,7 +142,7 @@ class KeypointDataset(Dataset):
 
 
 def collate_fn(batch):
-    """按 T 降序排列，pad 到 batch_max_len。batch_size 固定为 1。"""
+    """按 T 降序排列，pad 到 batch_max_len。"""
     batch = sorted(batch, key=lambda x: len(x["keypoints"]), reverse=True)
 
     keypoints = [item["keypoints"] for item in batch]
