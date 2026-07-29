@@ -94,3 +94,13 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
 - Conformer/Transformer encoder 替代 BiLSTM
+
+## 2026-07-29
+
+### ctc_decoders C++ 贪心解码器编译 [完成]
+
+- **背景**：`ctc_decoders-master/` 含 C++ CTC 解码库（贪心 + beam search + KenLM scorer），但缺少 kenlm/ 和 openfst-1.6.3/ 子目录（beam search + scorer 的依赖），且 SWIG 未安装
+- **决策**：v1 不做 beam search/LM，只编译贪心解码器（零外部依赖）。BeamDecoder/Scorer 在 `ctc_decoders.py` 中改为显式 `NotImplementedError`
+- **做法**：安装 swig 4.4.1 → 写最小 decoder_utils（替换 kenlm/openfst 依赖）→ SWIG 生成 Python 绑定 → MinGW g++ 静态编译 `_swig_decoders.cp310-win_amd64.pyd`（零运行时 DLL 依赖）
+- **产物**：`ctc_decoders-master/_swig_decoders.cp310-win_amd64.pyd` + `swig_decoders.py`，`ctc_decoders.ctc_greedy_decoder()` 可用
+- **验证**：argmax + 连续去重 + 去 blank + numpy 输入均通过
