@@ -1,6 +1,6 @@
 """
-主路时序模型: 1D Conv + BiLSTM + Linear + LogSoftmax
-输入 (T, B, 84) 关键点序列，输出 (T, B, vocab_size) log 概率。
+主路时序模型：1D Conv (stride=2×2 降采样) + BiLSTM + Linear + LogSoftmax
+输入 (T, B, 84) 关键点序列，输出 (T/4, B, vocab_size) log 概率。
 """
 import torch
 import torch.nn as nn
@@ -13,8 +13,12 @@ class SLRModel(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv1d(input_dim, conv_dim, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.BatchNorm1d(conv_dim),
+            nn.Conv1d(conv_dim, conv_dim, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(conv_dim, conv_dim, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
         )
+        self.layer_norm = nn.LayerNorm(conv_dim)
         self.lstm = nn.LSTM(
             input_size=conv_dim,
             hidden_size=hidden_size,
@@ -27,21 +31,18 @@ class SLRModel(nn.Module):
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, x, input_lengths):
-        """
-        x: (T, B, input_dim)  time-major
-        input_lengths: (B,) int64 tensor, 每样本实际帧数
-        返回: (T, B, vocab_size) log probabilities
-        """
-        # Conv1d 需要 (B, C, T)
         x = x.permute(1, 2, 0)  # (B, input_dim, T)
-        x = self.conv(x)         # (B, conv_dim, T)
-        x = x.permute(2, 0, 1)  # (T, B, conv_dim)
+        x = self.conv(x)         # (B, conv_dim, T/4)
+        x = x.permute(0, 2, 1)  # (B, T', conv_dim)
+        x = self.layer_norm(x)
+        x = x.permute(1, 0, 2)  # (T', B, conv_dim)
 
-        # pack → LSTM → unpack
+        input_lengths = (input_lengths // 4).clamp(min=1)
+
         packed = nn.utils.rnn.pack_padded_sequence(x, input_lengths.cpu(),
                                                     enforce_sorted=False)
         lstm_out, _ = self.lstm(packed)
-        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(lstm_out)  # (T, B, hidden*2)
+        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(lstm_out)
 
-        logits = self.fc(lstm_out)  # (T, B, vocab_size)
+        logits = self.fc(lstm_out)
         return self.log_softmax(logits)
