@@ -36,7 +36,6 @@ def seed_torch(seed=0):
 
 
 def compute_wer(pred_texts, label_texts):
-    """简单 WER：基于字级别编辑距离（不依赖 TFNet WER.py 的复杂输出格式）。"""
     from WER import WerList
     hypotheses = [" ".join(t) for t in pred_texts]
     references = [" ".join(t) for t in label_texts]
@@ -46,8 +45,11 @@ def compute_wer(pred_texts, label_texts):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--vocab", type=str, default="vocab.json",
-                        help="词表文件（默认 vocab.json，快速验证用 vocab_top478.json）")
+    parser.add_argument("--vocab", type=str, default="vocab.json")
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--amp", action="store_true", default=True,
+                        help="启用 AMP 混合精度 (默认开启)")
+    parser.add_argument("--no-amp", action="store_false", dest="amp")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -60,37 +62,34 @@ def main():
     blank = word2idx["<blank>"]
 
     print(f"词表: {args.vocab}, 大小: {vocab_size}, blank={blank}")
+    print(f"batch_size: {args.batch_size}, AMP: {args.amp}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"设备: {device}")
 
-    # --- 数据集 ---
     train_set = KeypointDataset(KEYPOINT_BASE, "train", word2idx)
     dev_set = KeypointDataset(KEYPOINT_BASE, "dev", word2idx)
-
     print(f"训练集: {len(train_set)} 样本, 验证集: {len(dev_set)} 样本")
 
     train_loader = DataLoader(
-        train_set, batch_size=1, shuffle=True,
-        num_workers=2, pin_memory=True, collate_fn=collate_fn,
+        train_set, batch_size=args.batch_size, shuffle=True,
+        num_workers=4, pin_memory=True, collate_fn=collate_fn,
     )
     dev_loader = DataLoader(
-        dev_set, batch_size=1, shuffle=False,
-        num_workers=1, pin_memory=True, collate_fn=collate_fn,
+        dev_set, batch_size=args.batch_size, shuffle=False,
+        num_workers=2, pin_memory=True, collate_fn=collate_fn,
     )
 
-    # --- 模型 ---
     model = SLRModel(vocab_size=vocab_size).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
 
-    # --- 损失 & 优化 ---
     ctc_loss_fn = nn.CTCLoss(blank=blank, reduction="mean", zero_infinity=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5,
     )
+    scaler = torch.amp.GradScaler("cuda") if args.amp else None
 
-    # --- 训练 ---
     epochs = 100
     best_wer = float("inf")
     patience_counter = 0
@@ -101,29 +100,35 @@ def main():
         losses = []
 
         for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}"):
-            video = batch["video"].to(device)         # (T, 1, 84)
+            video = batch["video"].to(device)
             input_lengths = batch["input_lengths"].to(device)
             label = batch["label"].to(device)
             target_lengths = batch["target_lengths"].to(device)
 
-            log_probs = model(video, input_lengths)   # (T, 1, vocab_size)
-
-            loss = ctc_loss_fn(log_probs, label, input_lengths, target_lengths)
+            with torch.autocast("cuda", enabled=args.amp):
+                log_probs = model(video, input_lengths)
+                loss = ctc_loss_fn(log_probs, label, input_lengths, target_lengths)
 
             if torch.isinf(loss) or torch.isnan(loss):
                 continue
 
             optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
+            if scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.step()
 
             losses.append(loss.item())
 
         avg_loss = np.mean(losses) if losses else float("inf")
         print(f"Epoch {epoch+1}: train_loss={avg_loss:.4f}, lr={optimizer.param_groups[0]['lr']:.6f}")
 
-        # --- 验证 ---
         model.eval()
         all_pred_texts = []
         all_label_texts = []
@@ -136,28 +141,28 @@ def main():
                 label = batch["label"].to(device)
                 target_lengths = batch["target_lengths"].to(device)
 
-                log_probs = model(video, input_lengths)
+                with torch.autocast("cuda", enabled=args.amp):
+                    log_probs = model(video, input_lengths)
+                    loss = ctc_loss_fn(log_probs, label, input_lengths, target_lengths)
 
-                loss = ctc_loss_fn(log_probs, label, input_lengths, target_lengths)
                 if not (torch.isinf(loss) or torch.isnan(loss)):
                     dev_losses.append(loss.item())
 
-                # 贪心解码
                 pred_tokens = ctc_greedy_decode(log_probs, blank)
-                pred_text = [idx2word[int(t)] for t in pred_tokens[0].tolist() if int(t) < len(idx2word)]
-
-                label_tokens = label.tolist()
-                label_text = [idx2word[t] for t in label_tokens]
-
-                all_pred_texts.append(pred_text)
-                all_label_texts.append(label_text)
+                for b in range(video.shape[1]):
+                    pred_text = [idx2word[int(t)] for t in pred_tokens[b].tolist() if int(t) < len(idx2word)]
+                    label_start = sum(target_lengths[:b])
+                    label_end = label_start + target_lengths[b]
+                    label_tokens = label[label_start:label_end].tolist()
+                    label_text = [idx2word[t] for t in label_tokens]
+                    all_pred_texts.append(pred_text)
+                    all_label_texts.append(label_text)
 
         avg_dev_loss = np.mean(dev_losses) if dev_losses else float("inf")
         wer = compute_wer(all_pred_texts, all_label_texts)
 
         scheduler.step(wer)
 
-        # --- 保存 ---
         checkpoint = {
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
