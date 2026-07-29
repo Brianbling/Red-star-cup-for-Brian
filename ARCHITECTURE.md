@@ -106,10 +106,10 @@
 
 ### 1. 特征提取 — MediaPipe Hands
 - 仅使用 MediaPipe Hands（非 Holistic），省掉全身 33 点计算
-- 输出：左手 21 点 + 右手 21 点，每点 (x, y, visibility)
+- 输出：左手 21 点 + 右手 21 点，每点 (x, y, presence)
 - 缺点级处理：
-  - **置信度清洗**：`visibility < 0.6` 的关键点坐标置零
-  - **坐标归一化**：以双手腕间距（或单手腕到手肘距离）为分母，消除远近拍摄影响
+  - **置信度清洗**：`presence < 0.6` 的关键点坐标置零（未来改为 NaN）
+  - **坐标归一化**：以手腕（landmark 0）为原点平移，以手部跨度（手腕到中指 MCP 距离）为分母缩放。每视频固定一个 scale（所有帧手部跨度的中位数），消除远近拍摄和画面位置差异
   - **手部丢失处理**：连续 M 帧手部置信度均 < 阈值 → 清空滑动窗口 + 重置 CTC 隐状态
 
 ### 2. 滑动窗口
@@ -152,9 +152,9 @@ else:
 | 手部丢失清缓存帧数 M | 30 帧 (~1s) | 连续丢失才清 |
 
 ### 5. 时序模型
-- **1D Conv 编码层**：将每帧 42 维关键点（21×2）升维到 256 维
-- **BiLSTM**：2 层双向 LSTM，hidden=512（复用 TFNet 的 `BiLSTM.py`）
-- **Linear + CTC**：输出到词表大小的 logits
+- **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维
+- **BiLSTM**：2 层双向 LSTM，hidden=512（独立实现，未复用 TFNet）
+- **Linear + LogSoftmax**：输出到词表大小的 log 概率
 
 ### 6. CTC 解码 + 后处理
 - 贪心解码（取每帧最大概率的词）
@@ -191,14 +191,9 @@ CE-CSL 视频
 
 ## TFNet 复用清单
 
-| 模块 | 复用 | 改动 |
-|------|------|------|
-| `BiLSTM.py` | 完整复用 | 无 |
-| `Transformer.py` | 可选保留 | 可作为 BiLSTM 的替代/增强 |
-| `Train.py` | 复用训练框架 | seed、优化器、验证逻辑不动 |
-| `DataProcessMoudle.py` | 复用标签解析 | Dataset 换读 .npy 关键点 |
-| `decode.py` | 引用解码逻辑 | CTC 部分提取出来 |
-| `WER.py` | 完整复用 | 评估指标不变 |
-| `Net.py` | 大改 | ResNet/3DConv 换 1DConv+BiLSTM |
-| `Module.py` | 部分复用 | 蒸馏/多分类器逻辑保留 |
-| `ReadConfig.py` | 复用 | 参数结构保持兼容 |
+实际只复用了 `WER.py`。模型、训练、数据加载均为独立实现（`src/model.py`、`src/train.py`、`src/dataset.py`）。
+
+| 模块 | 状态 |
+|------|------|
+| `WER.py` | 复用（唯一） |
+| 其余所有模块 | 未复用，独立实现 |

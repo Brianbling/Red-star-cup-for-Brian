@@ -173,13 +173,29 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
-| 0 | 环境搭建 | **已完成** (2026-07-28) |
-| 1 | 关键点预处理 | **进行中** (train 2485/4972, dev/test 排队) |
-| 2 | 模型训练 | 代码完成，待 Phase 1 完成后启动 |
-| 3 | CTC 解码 | 代码完成（src/decode.py） |
+| 0 | 环境搭建 | 已完成 (2026-07-28) |
+| 1 | 关键点预处理（5987 .npy，~0.4GB） | **已完成** (2026-07-29) |
+| 2 | 模型训练 | 首次训练 WER 93.15%，缺坐标归一化需重训 |
+| 3 | CTC 解码 | 代码完成 (`src/decode.py`) |
 | 4 | 实时推理管线 | 待开始 |
 | 5 | 旁路 YOLO | 待开始 |
 | 6 | 联调测试 | 待开始 |
+
+## 训练计划
+
+**硬约束：必须先跑通 CE-CSL 6000 句，确认 pipeline 无误、WER 可接受，再碰其他数据集。**
+禁止并行开工——基线没跑通之前不加任何变量。
+
+首次训练结果：15 epoch early stop，best WER 93.15%（≈随机）。根因：Phase 1 存原始像素坐标，
+未做手腕归一化，不同视频尺度不统一。下一步：坐标归一化 + NaN 零值改造，预处理重跑后重训。
+
+```
+第1步: CE-CSL 6000 句 → baseline WER     ← 首次 93.15%，需坐标归一化后重训
+第2步: CSL-Daily（下载中）→ 单独训练对比 WER
+第3步: CE-CSL + CSL-Daily 合并训练 → 最终模型
+```
+
+CSL-Daily 到第 2 步才动用，SLR_Dataset（CSL-2015）是旁路 YOLO 数据，不影响主路训练顺序。
 
 ## 工作流治理（防幻觉与决策一致性）
 
@@ -213,14 +229,16 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 
 | 陷阱 | 错误认知 | 正确事实 |
 |------|---------|---------|
-| TFNet 复用 | "TFNet BiLSTM.py/Train.py/DataProcessMoudle.py 被复用" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
-| MediaPipe API | "用 `mp.solutions.hands`" | 已迁移到 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
-| 词表大小 | "~500-1000 词" | 3515 tokens（vocab.json） |
+| TFNet 复用 | "复用了 BiLSTM.py/Train.py/DataProcessMoudle.py" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
+| MediaPipe API | "用 `mp.solutions.hands`" | 已迁至 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
+| 词表大小 | "~500-1000 词" | 3515 tokens（`vocab.json`） |
 | 模型参数 | "~5M" | 13.1M |
 | 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/` |
-| 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
-| 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
-| ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
+| 坐标归一化 | "预处理已做手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
+| ctc_decoders | "C++ 解码库可用" | 存在但未编译，目前用自写贪心解码 |
+| 复用决策 | "能复用的就复用" | 删比重写更费劲就不复用 |
+| 全零帧比例 | "29% 帧全零" | 真正 84 维全零仅 5.0%，但前后分布极不均衡（前 100 文件 0.8% vs 后 100 文件 39.7%） |
+| clean_word bug | "dataset.py 正确读取了所有标签" | `build_vocab.py` 调用了 `clean_word()` 去数字后缀，但 `dataset.py._gloss_to_ids()` 未调用，导致 6.0% token 静默丢弃 |
 
 ### 4. 编辑约束
 
