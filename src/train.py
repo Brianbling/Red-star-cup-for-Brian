@@ -8,20 +8,20 @@ import sys
 import argparse
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
 
 BASE_DIR = Path("D:/red star project")
+SCRIPT_DIR = Path("D:/red star project/.claude/worktrees/p0-ctc-blank-repair")
 KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
 
-sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(0, str(SCRIPT_DIR / "src"))
 sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
 
-from model import SLRModel
+from model_conformer import Conformer
 from dataset import KeypointDataset, collate_fn
 from decode import ctc_greedy_decode
 
@@ -44,10 +44,50 @@ def compute_wer(pred_texts, label_texts):
     return result["wer"]
 
 
+def compute_diagnostics(model, dataloader, blank_id, idx2word, ctc_input_divisor, device):
+    model.eval()
+    total_frames = 0
+    blank_frames = 0
+    total_unique = 0
+    zero_pred_count = 0
+    total_samples = 0
+
+    with torch.no_grad():
+        for batch in dataloader:
+            video = batch["video"].to(device)
+            input_lengths = batch["input_lengths"]
+            label = batch["label"]
+            target_lengths = batch["target_lengths"]
+
+            log_probs = model(video, input_lengths)
+            ctc_input_lengths = (input_lengths // ctc_input_divisor).clamp(min=1)
+
+            for b in range(video.shape[1]):
+                T_b = ctc_input_lengths[b].item()
+                pred = log_probs[:T_b, b, :].argmax(dim=-1)
+
+                blank_frames += (pred == blank_id).sum().item()
+                total_frames += T_b
+
+                unique = set(pred[pred != blank_id].cpu().numpy())
+                total_unique += len(unique)
+
+                decoded = ctc_greedy_decode(pred.unsqueeze(0), blank_id)
+                if len(decoded[0]) == 0:
+                    zero_pred_count += 1
+                total_samples += 1
+
+    return {
+        'p_blank': blank_frames / max(total_frames, 1),
+        'avg_unique': total_unique / max(total_samples, 1),
+        'zero_pred_pct': zero_pred_count / max(total_samples, 1) * 100,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vocab", type=str, default="vocab.json")
-    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--no-amp", action="store_false", dest="amp")
     args = parser.parse_args()
@@ -80,8 +120,15 @@ def main():
         num_workers=1, pin_memory=True, collate_fn=collate_fn,
     )
 
-    model = SLRModel(vocab_size=vocab_size).to(device)
+    model = Conformer(vocab_size=vocab_size, blank_id=blank).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
+
+    bias_values = model.fc.bias.data[:10].tolist()
+    print(f"FC bias 前10: {[f'{v:.2f}' for v in bias_values]}")
+    with torch.no_grad():
+        init_probs = torch.softmax(model.fc.bias, dim=-1)
+        print(f"P(blank|bias)={init_probs[blank].item():.3f}, "
+              f"P(top-5 non-blank)={init_probs[1:6].tolist()}")
 
     ctc_loss_fn = nn.CTCLoss(blank=blank, reduction="mean", zero_infinity=False)
 
@@ -91,10 +138,9 @@ def main():
     )
     scaler = torch.amp.GradScaler("cuda") if args.amp else None
 
-    blank_penalty_weight = 20.0
-    entropy_weight = 0.01
+    ctc_input_divisor = 4
 
-    epochs = 100
+    epochs = 30
     best_wer = float("inf")
     patience_counter = 0
     patience = 15
@@ -111,16 +157,8 @@ def main():
 
             with torch.autocast("cuda", enabled=args.amp):
                 log_probs = model(video, input_lengths)
-                ctc_input_lengths = (input_lengths // 4).clamp(min=1)
-                ctc_loss = ctc_loss_fn(log_probs, label, ctc_input_lengths, target_lengths)
-
-                probs = torch.exp(log_probs)
-                blank_prob = probs[:, :, blank].mean()
-                blank_penalty = (blank_prob - 0.85).clamp(min=0)
-
-                entropy = -(probs * log_probs).sum(dim=-1).mean()
-
-                loss = ctc_loss + blank_penalty_weight * blank_penalty + entropy_weight * entropy
+                ctc_input_lengths = (input_lengths // ctc_input_divisor).clamp(min=1)
+                loss = ctc_loss_fn(log_probs, label, ctc_input_lengths, target_lengths)
 
             if torch.isinf(loss) or torch.isnan(loss):
                 continue
@@ -137,18 +175,19 @@ def main():
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                 optimizer.step()
 
-            losses.append({"ctc": ctc_loss.item(), "bp": blank_penalty.item(), "entropy": entropy.item(), "total": loss.item()})
+            losses.append(loss.item())
 
         if not losses:
             print(f"Epoch {epoch+1}: 所有 loss 为 inf/nan，跳过")
             continue
 
-        avg_ctc = np.mean([l["ctc"] for l in losses])
-        avg_bp = np.mean([l["bp"] for l in losses])
-        avg_entropy = np.mean([l["entropy"] for l in losses])
-        avg_total = np.mean([l["total"] for l in losses])
-        print(f"Epoch {epoch+1}: ctc={avg_ctc:.4f}, bp={avg_bp:.4f}, ent={avg_entropy:.4f}, total={avg_total:.4f}, "
-              f"lr={optimizer.param_groups[0]['lr']:.6f}")
+        avg_loss = np.mean(losses)
+        print(f"Epoch {epoch+1}: loss={avg_loss:.4f}, lr={optimizer.param_groups[0]['lr']:.6f}")
+
+        diag = compute_diagnostics(model, dev_loader, blank, idx2word, ctc_input_divisor, device)
+        print(f"  [Diag] P(blank)={diag['p_blank']:.1%}, "
+              f"uniq/sample={diag['avg_unique']:.1f}, "
+              f"zero_pred={diag['zero_pred_pct']:.1f}%")
 
         model.eval()
         all_pred_texts = []

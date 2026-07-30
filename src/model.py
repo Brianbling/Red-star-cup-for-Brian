@@ -8,16 +8,9 @@ import torch.nn as nn
 
 class SLRModel(nn.Module):
     def __init__(self, vocab_size, input_dim=84, conv_dim=256, hidden_size=512,
-                 num_layers=2, dropout=0.3):
+                 num_layers=2, dropout=0.3, blank_id=0):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(input_dim, conv_dim, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(conv_dim, conv_dim, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(conv_dim, conv_dim, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-        )
+        self.conv = nn.Conv1d(input_dim, conv_dim, kernel_size=5, stride=4, padding=2)
         self.layer_norm = nn.LayerNorm(conv_dim)
         self.lstm = nn.LSTM(
             input_size=conv_dim,
@@ -28,6 +21,8 @@ class SLRModel(nn.Module):
             batch_first=False,
         )
         self.fc = nn.Linear(hidden_size * 2, vocab_size)
+        nn.init.constant_(self.fc.bias, 0.0)
+        self.fc.bias.data[blank_id] = 5.32
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, x, input_lengths):
