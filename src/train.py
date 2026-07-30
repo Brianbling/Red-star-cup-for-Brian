@@ -227,7 +227,7 @@ def main():
     scaler = torch.amp.GradScaler("cuda") if args.amp else None
 
     blank_penalty_weight = 20.0
-    blank_threshold = 0.65
+    blank_threshold = 0.55
     entropy_weight = 0.01
 
     epochs = 100
@@ -238,11 +238,14 @@ def main():
     def train_step(video, input_lengths, label, target_lengths):
         with torch.autocast("cuda", enabled=args.amp):
             log_probs = model(video, input_lengths)
+            # Only penalize blank on valid (non-padded) frames
             ctc_input_lengths = (input_lengths // 4).clamp(min=1)
             ctc_loss = ctc_loss_fn(log_probs, label, ctc_input_lengths, target_lengths)
 
             probs = torch.exp(log_probs)
-            blank_prob = probs[:, :, blank].mean()
+            valid_mask = torch.arange(probs.shape[0], device=probs.device).unsqueeze(1) < ctc_input_lengths.unsqueeze(0)
+            valid_blank = probs[:, :, blank][valid_mask]
+            blank_prob = valid_blank.mean()
             blank_penalty = (blank_prob - blank_threshold).clamp(min=0)
 
             entropy = -(probs * log_probs).sum(dim=-1).mean()
