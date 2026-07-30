@@ -136,11 +136,9 @@ def load_csl_daily_labels(label_dir):
     with open(pkl_path, "rb") as f:
         data = pickle.load(f, encoding="latin1")
 
-    gloss_map = data["gloss_map"]
     video_info = {}
     for info in data["info"]:
-        glosses = [gloss_map[int(g)] for g in info["label_gloss"]]
-        video_info[info["name"]] = glosses
+        video_info[info["name"]] = info["label_gloss"]
 
     video_split = {}
     with open(split_path, "r", encoding="utf-8") as f:
