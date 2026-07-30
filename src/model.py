@@ -1,13 +1,13 @@
 """
 主路时序模型：1D Conv (stride=2×2 降采样) + BiLSTM + Linear + LogSoftmax
-输入 (T, B, 84) 关键点序列，输出 (T/4, B, vocab_size) log 概率。
+输入 (T, B, input_dim) 多模态序列，输出 (T/4, B, vocab_size) log 概率。
 """
 import torch
 import torch.nn as nn
 
 
 class SLRModel(nn.Module):
-    def __init__(self, vocab_size, input_dim=84, conv_dim=256, hidden_size=512,
+    def __init__(self, vocab_size, input_dim=660, conv_dim=256, hidden_size=512,
                  num_layers=2, dropout=0.3):
         super().__init__()
         self.conv = nn.Sequential(

@@ -15,10 +15,12 @@ import numpy as np
 from pathlib import Path
 
 BASE_DIR = Path("D:/red star project")
+WORKTREE_DIR = Path(__file__).resolve().parent.parent
 KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
-CHECKPOINT_DIR = BASE_DIR / "checkpoints"
+CHECKPOINT_DIR = WORKTREE_DIR / "checkpoints"
+CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(0, str(WORKTREE_DIR / "src"))
 sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
 
 from model import SLRModel
@@ -40,8 +42,7 @@ def compute_wer(pred_texts, label_texts):
     from WER import WerList
     hypotheses = [" ".join(t) for t in pred_texts]
     references = [" ".join(t) for t in label_texts]
-    result = WerList(hypotheses=hypotheses, references=references)
-    return result["wer"]
+    return WerList(hypotheses=hypotheses, references=references)
 
 
 def compute_diagnostics(model, dataloader, device, blank=0):
@@ -268,13 +269,15 @@ def main():
                     all_pred_texts.append(pred_text)
                     all_label_texts.append(label_text)
 
-        wer = compute_wer(all_pred_texts, all_label_texts)
+        wer_result = compute_wer(all_pred_texts, all_label_texts)
+        wer = wer_result["wer"]
         scheduler.step(wer)
 
         diag = compute_diagnostics(model, dev_loader, device, blank)
-        total_pred_tokens = sum(len(p) for p in all_pred_texts)
         zero_pred = sum(1 for p in all_pred_texts if len(p) == 0)
-        print(f"  wer={wer:.2f}%, P(blank)={diag['p_blank']:.3f}, "
+        print(f"  wer={wer:.2f}%, S={wer_result['sub_rate']:.1f}%, "
+              f"D={wer_result['del_rate']:.1f}%, I={wer_result['ins_rate']:.1f}%, "
+              f"P(blank)={diag['p_blank']:.3f}, "
               f"collapse={diag['collapsed_pct']:.1f}%, "
               f"zero_pred={zero_pred}/{len(all_pred_texts)}")
 
