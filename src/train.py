@@ -17,8 +17,7 @@ from pathlib import Path
 BASE_DIR = Path("D:/red star project")
 WORKTREE_DIR = Path(__file__).resolve().parent.parent
 KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
-CHECKPOINT_DIR = WORKTREE_DIR / "checkpoints"
-CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_CHECKPOINT_DIR = WORKTREE_DIR / "checkpoints"
 
 sys.path.insert(0, str(WORKTREE_DIR / "src"))
 sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
@@ -104,6 +103,13 @@ def main():
                         help="Min consecutive active frames for a segment")
     parser.add_argument("--gap-frames", type=int, default=3,
                         help="Max gap of zero frames to merge segments")
+    parser.add_argument("--visual-only", action="store_true", default=False,
+                        help="Only include samples with visual features")
+    parser.add_argument("--visual-fusion", type=str, default="raw",
+                        choices=["raw", "projected", "none"],
+                        help="Fusion mode: raw=concat, projected=separate projection, none=kp-only")
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="Override checkpoint save directory")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -119,21 +125,34 @@ def main():
     print(f"batch_size: {args.batch_size}, AMP: {args.amp}")
     print(f"activity_detect: {args.activity_detect}, "
           f"min_active_frames={args.min_active_frames}, gap_frames={args.gap_frames}")
+    print(f"visual_only: {args.visual_only}, visual_fusion: {args.visual_fusion}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"设备: {device}")
+
+    no_visual = (args.visual_fusion == "none")
+
+    if args.checkpoint_dir:
+        checkpoint_dir = Path(args.checkpoint_dir)
+    else:
+        checkpoint_dir = DEFAULT_CHECKPOINT_DIR
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     train_set = KeypointDataset(
         KEYPOINT_BASE, "train", word2idx,
         activity_detect=args.activity_detect,
         min_active_frames=args.min_active_frames,
         gap_frames=args.gap_frames,
+        visual_only=args.visual_only,
+        no_visual=no_visual,
     )
     dev_set = KeypointDataset(
         KEYPOINT_BASE, "dev", word2idx,
         activity_detect=args.activity_detect,
         min_active_frames=args.min_active_frames,
         gap_frames=args.gap_frames,
+        visual_only=args.visual_only,
+        no_visual=no_visual,
     )
     print(f"训练集: {len(train_set)} 样本, 验证集: {len(dev_set)} 样本")
 
@@ -166,7 +185,9 @@ def main():
         num_workers=1, pin_memory=True, collate_fn=collate_fn,
     )
 
-    model = SLRModel(vocab_size=vocab_size).to(device)
+    input_dim = 84 if no_visual else 660
+    model = SLRModel(vocab_size=vocab_size, input_dim=input_dim,
+                     visual_fusion=args.visual_fusion).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
 
     # Print init diagnostics
@@ -184,6 +205,7 @@ def main():
     scaler = torch.amp.GradScaler("cuda") if args.amp else None
 
     blank_penalty_weight = 20.0
+    blank_threshold = 0.65
     entropy_weight = 0.01
 
     epochs = 100
@@ -208,7 +230,7 @@ def main():
 
                 probs = torch.exp(log_probs)
                 blank_prob = probs[:, :, blank].mean()
-                blank_penalty = (blank_prob - 0.85).clamp(min=0)
+                blank_penalty = (blank_prob - blank_threshold).clamp(min=0)
 
                 entropy = -(probs * log_probs).sum(dim=-1).mean()
 
@@ -291,12 +313,12 @@ def main():
             "word2idx": word2idx,
         }
 
-        torch.save(checkpoint, CHECKPOINT_DIR / "last.pt")
+        torch.save(checkpoint, checkpoint_dir / "last.pt")
 
         if wer < best_wer:
             best_wer = wer
             patience_counter = 0
-            torch.save(checkpoint, CHECKPOINT_DIR / "best.pt")
+            torch.save(checkpoint, checkpoint_dir / "best.pt")
             print(f"  [NEW BEST] wer={wer:.2f}% → best.pt")
         else:
             patience_counter += 1
