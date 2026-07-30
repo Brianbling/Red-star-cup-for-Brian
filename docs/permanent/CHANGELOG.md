@@ -95,33 +95,12 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
 - Conformer/Transformer encoder 替代 BiLSTM
 
-### 2026-07-30 — Activity Detection 训练完成 + 四项审计
+### 2026-07-30 — Activity Detection 实现
 
-- **训练结果**：78 epoch early stop，best WER **66.85%** (Epoch 63)，best collapse **8.1%** (Epoch 50)
-- **collapse% 从 31.2% → 9.4%**（相对降低 70%），但 WER 几乎没变（66.5% → 66.85%）
-- **四项审计**：
-  1. **丢弃帧 = 手部丢失帧**：99.7% 是零帧（手部丢失），0.3% 是 <5帧 的短有效段（正确丢弃），0 长有效段被误杀。min_active_frames=5 无误杀
-  2. **多段样本 vs 坍缩重叠**：多段样本 81/509 (15.9%)，平均 2.3 段/样本。精确重叠需模型在原始 dev 集跑推理，但 15.9% < 31.2% 说明多段只是坍缩的部分原因
-  3. **跨段合并风险**：4 帧零分隔符，Conformer self-attention 理论上可跨过，但零帧含零信息，attention 权重应弱。需实际推断验证
-  4. **collapse% 变化**：159/509 → 49/509 (31.2% → 9.4%, -70%)
-- **核心结论**：activity detection 技术上成功定位 blank 坍缩，但 WER 没变说明坍缩样本不是 WER 瓶颈。剩余 66.85% 错误来自 token 预测错误（插入/删除/替换），而非 blank 坍缩
-- **下一步方向**：分析 token 级错误分布 (insertion/deletion/substitution)，定位 WER 真正瓶颈
-
-### 2026-07-30 — S/D/I 分解 + clean_word 不一致修复
-
-- **S/D/I 分解**：WER=66.85%，S=341 (18.8%)，D=61 (3.4%)，I=808 (44.6%)。Insertion 占错误总数的 66.8%
-- **根因定位**：`build_vocab.py` 和 `dataset.py` 使用不同的标签清洗逻辑——
-  `build_vocab.py` 调用 `clean_word()` 去括号去数字再存词表，但 `dataset.py` 只用 `w.strip()` 后直接查 `word2idx`
-  - 含括号 token（如 `"动作（快）"`）在 `build_vocab.py` 中被清洗为 `"动作"` 存入词表
-  - `dataset.py` 用 `"动作（快）"` 查词表 → KeyError → 静默跳过
-  - 全量词表 12.7% token 被丢弃，top-478 子词表 34.3% token 被丢弃
-  - 标签跳过 → 手势帧有运动信号但无标签目标 → CTC 被迫将有手势帧训练成 blank →
-    特征矛盾 → blank 边界判断不稳定 → 推理时过度触发 → I 主导
-- **修复**：新建 `src/vocab_utils.py`，`clean_word()` 使用 depth 计数器（支持括号嵌套），
-  `build_vocab.py` 和 `dataset.py` 共享同一函数
-- **验证**：深度 ≤2 的嵌套括号（全量词表仅 3 个 unique token 不在词表中，top-478 子词表受限于覆盖率）
-- **修正了 `WER.py` 中的 D/I 标签交换 bug**：初始化 `d[i][0]` 和 `d[0][j]` 的成本分配错位，
-  且 backtrace 中 Insert 和 Delete 的操作类型与代价常量不匹配。
-  由于 DEL/INS/SUB 代价均为 1，总 WER 不受影响，但 `del_rate` 和 `ins_rate` **互换**。
-  修复后 S/D/I 报告准确，I 主导的诊断不会因此改变（修复前原代码显示 I=808）
-- **`src/train.py`**：验证时每 epoch 输出 S/D/I 分解（从 `WerList` 全量结果中读取）
+- **背景**：归一化修复后 P0 训练完成（Conformer + stride=4 + blank_bias=+5.32），WER 66.5% 平台化。31% 样本（159/509）在有效帧上 p_blank=100%——完全坍缩，根因是手部丢失帧过多。
+- **实现 `src/activity_detect.py`**：运行合并算法切出连续有效段。算法：标记有效帧（|kp|>1e-6）→ 收集运行列表 → 合并间隔≤3帧的相邻运行 → 保留总有效帧≥5的段 → 段间插入4帧零分隔符。全零序列安全兜底返回原序列。
+- **修改 `src/dataset.py`**：`KeypointDataset` 新增 `activity_detect` 参数，`__getitem__` 中自动切段，返回 `original_len`/`trimmed`/`frames_removed` 供统计。
+- **修改 `src/train.py`**：新增 `--activity-detect`、`--min-active-frames`、`--gap-frames` CLI 参数；每 epoch 打印 `compute_diagnostics()` 输出的 P(blank)、collapse%、zero_pred。
+- **修复 `src/model.py`**：补充 blank bias 初始化 `self.fc.bias.data[0]=5.32`（P(blank)≈0.3），之前漏写 bias init 导致 P(blank)@init=0.002。
+- **数据统计**（dev 509 样本）：15.3% 有真实中间手部丢失→多段；75.3% 仅切首尾静默帧；0 样本全零丢失；总帧量 -32.5%。train 4972 样本帧量 -25.9%。
+- **预期效果**：31% 坍缩样本的手部丢失帧被剥离，T/L 比下降，blank 最优比例自然下降，全局 WER 有望从 66.5% 降到 45-55%。
