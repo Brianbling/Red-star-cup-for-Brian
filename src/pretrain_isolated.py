@@ -242,11 +242,14 @@ def main():
                       f"{[(idx2word[str(c)], f'{a:.1%}') for c, a, _ in bottom10]}")
 
         checkpoint = {
+            "epoch": epoch,
+            "dev_acc": dev_acc,
             "encoder_state_dict": encoder.state_dict(),
             "classifier_state_dict": classifier.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
-            "epoch": epoch,
-            "dev_acc": dev_acc,
+            "vocab_size": num_classes,
+            "idx2word": idx2word,
+            "word2idx": word2idx,
         }
         torch.save(checkpoint, checkpoint_dir / "last.pt")
 
