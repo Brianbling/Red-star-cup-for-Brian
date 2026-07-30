@@ -1,6 +1,6 @@
 """
 CE-CSL 多模态 Dataset / DataLoader。
-读取预处理的 .npy 关键点文件 + 视觉特征文件 + CSV 标签，返回 (T, 660) tensor + token ids。
+读取预处理的 .npy 关键点文件 + 视觉特征文件 + CSV 标签，返回 (T, D) tensor + token ids。
 """
 import csv
 import torch
@@ -9,12 +9,13 @@ import numpy as np
 from pathlib import Path
 from activity_detect import segment_active_regions, extract_active_frames
 from vocab_utils import clean_word
+from augmentation import apply_augmentation
 
 
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx, activity_detect=False,
                  min_active_frames=5, gap_frames=3, visual_only=False,
-                 no_visual=False):
+                 no_visual=False, augment=False):
         self.base_dir = Path(base_dir)
         self.keypoint_dir = self.base_dir / "keypoints" / split
         self.visual_dir = self.base_dir / "visual_features" / split
@@ -24,6 +25,7 @@ class KeypointDataset(Dataset):
         self.gap_frames = gap_frames
         self.visual_only = visual_only
         self.no_visual = no_visual
+        self.augment = augment
         self.samples = []  # [(video_id, token_ids, has_visual)]
 
         label_path = self.base_dir / "label" / f"{split}.csv"
@@ -97,6 +99,9 @@ class KeypointDataset(Dataset):
                     vf_seg = extract_active_frames(vf, segments)
                     vf = vf_seg
 
+        if self.augment:
+            kp = apply_augmentation(kp)
+
         if self.no_visual:
             features = kp
         else:
@@ -133,7 +138,7 @@ def collate_fn(batch):
         padded.append(k)
 
     padded = torch.stack(padded)  # (B, T_max, input_dim)
-    padded = padded.permute(1, 0, 2)  # (T_max, B, input_dim)  time-major for LSTM
+    padded = padded.permute(1, 0, 2)  # (T_max, B, input_dim)
 
     targets = torch.cat([l for l in labels], dim=0)  # (sum L_i,)
 
@@ -144,3 +149,49 @@ def collate_fn(batch):
         "target_lengths": target_lengths,
         "video_ids": video_ids,
     }
+
+
+def collate_fn_grouped(batch, group_size=4):
+    """
+    按序列长度排序后分组 pad，每组 group_size 个样本。
+    返回 list of dicts，每个 dict 与 collate_fn 格式一致。
+    """
+    batch = sorted(batch, key=lambda x: len(x["features"]))
+
+    batches = []
+    for i in range(0, len(batch), group_size):
+        group = batch[i:i + group_size]
+        if len(group) < 2:
+            result = collate_fn(group)
+            batches.append(result)
+            continue
+
+        features_list = [item["features"] for item in group]
+        labels = [item["label"] for item in group]
+        video_ids = [item["video_id"] for item in group]
+
+        input_lengths = torch.tensor([len(k) for k in features_list], dtype=torch.long)
+        target_lengths = torch.tensor([len(l) for l in labels], dtype=torch.long)
+
+        max_len = input_lengths.max().item()
+        padded = []
+        for k in features_list:
+            T = k.shape[0]
+            if T < max_len:
+                pad = torch.zeros(max_len - T, k.shape[1])
+                k = torch.cat([k, pad], dim=0)
+            padded.append(k)
+
+        padded = torch.stack(padded)
+        padded = padded.permute(1, 0, 2)  # (T_max, B, input_dim)
+        targets = torch.cat([l for l in labels], dim=0)
+
+        batches.append({
+            "video": padded,
+            "input_lengths": input_lengths,
+            "label": targets,
+            "target_lengths": target_lengths,
+            "video_ids": video_ids,
+        })
+
+    return batches
