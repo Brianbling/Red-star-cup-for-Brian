@@ -7,13 +7,18 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
+from activity_detect import segment_active_regions, extract_active_frames
 
 
 class KeypointDataset(Dataset):
-    def __init__(self, base_dir, split, word2idx):
+    def __init__(self, base_dir, split, word2idx, activity_detect=False,
+                 min_active_frames=5, gap_frames=3):
         self.base_dir = Path(base_dir)
         self.keypoint_dir = self.base_dir / "keypoints" / split
         self.word2idx = word2idx
+        self.activity_detect = activity_detect
+        self.min_active_frames = min_active_frames
+        self.gap_frames = gap_frames
         self.samples = []  # [(video_id, token_ids)]
 
         label_path = self.base_dir / "label" / f"{split}.csv"
@@ -27,7 +32,6 @@ class KeypointDataset(Dataset):
                 token_ids = self._gloss_to_ids(gloss)
                 if len(token_ids) == 0:
                     continue
-                # 跳过不存在视频的孤立行
                 if video_id == "train-01418":
                     continue
                 npy_path = self.keypoint_dir / f"{video_id}.npy"
@@ -49,16 +53,32 @@ class KeypointDataset(Dataset):
         video_id, token_ids = self.samples[index]
         npy_path = self.keypoint_dir / f"{video_id}.npy"
         kp = np.load(str(npy_path))  # (T, 84)
+
+        original_len = len(kp)
+
+        if self.activity_detect:
+            segments = segment_active_regions(
+                kp, self.min_active_frames, self.gap_frames)
+            kp = extract_active_frames(kp, segments)
+            trimmed = len(segments) > 0 and len(kp) < original_len
+            frames_removed = original_len - len(kp) if trimmed else 0
+        else:
+            trimmed = False
+            frames_removed = 0
+
         kp = torch.from_numpy(kp).float()
         return {
-            "keypoints": kp,          # (T, 84)
-            "label": torch.tensor(token_ids, dtype=torch.long),  # (L,)
+            "keypoints": kp,
+            "label": torch.tensor(token_ids, dtype=torch.long),
             "video_id": video_id,
+            "original_len": original_len,
+            "trimmed": trimmed,
+            "frames_removed": frames_removed,
         }
 
 
 def collate_fn(batch):
-    """按 T 降序排列，pad 到 batch_max_len。batch_size 固定为 1。"""
+    """按 T 降序排列，pad 到 batch_max_len。"""
     batch = sorted(batch, key=lambda x: len(x["keypoints"]), reverse=True)
 
     keypoints = [item["keypoints"] for item in batch]
