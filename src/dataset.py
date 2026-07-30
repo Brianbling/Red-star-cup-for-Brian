@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
 from activity_detect import segment_active_regions, extract_active_frames
+from vocab_utils import clean_word
 
 
 class KeypointDataset(Dataset):
@@ -41,7 +42,7 @@ class KeypointDataset(Dataset):
     def _gloss_to_ids(self, gloss):
         ids = []
         for w in gloss.split("/"):
-            w = w.strip()
+            w = clean_word(w)
             if w and w in self.word2idx:
                 ids.append(self.word2idx[w])
         return ids

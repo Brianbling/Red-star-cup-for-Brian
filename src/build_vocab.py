@@ -10,33 +10,7 @@ from pathlib import Path
 BASE_DIR = Path("D:/red star project")
 LABEL_DIR = BASE_DIR / "CE-CSL/CE-CSL/label"
 
-
-def clean_word(word):
-    """移除括号内容、首尾标点、尾部数字（复用 TFNet PreWords 逻辑）"""
-    # 移除括号及其内容
-    chars = list(word)
-    result = []
-    skip = False
-    for c in chars:
-        if c in "(（[{（":
-            skip = True
-            continue
-        if c in ")）]}）":
-            skip = False
-            continue
-        if not skip:
-            result.append(c)
-    word = "".join(result).strip()
-
-    if not word:
-        return word
-
-    # 移除尾部纯数字（如 "2023" 保留，"高考2023" → "高考"）
-    if word[-1].isdigit() and not word[0].isdigit():
-        word = word.rstrip("0123456789")
-
-    word = word.strip()
-    return word
+from vocab_utils import clean_word
 
 
 def main():
