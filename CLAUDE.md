@@ -54,7 +54,7 @@ D:/red star project/
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv(stride=2×2) + BiLSTM + Linear + LogSoftmax
+│   ├── model.py              # 1D Conv(stride=2×2) + Conformer(4层) + Linear + LogSoftmax
 │   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
 │   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
 │   └── decode.py             # CTC 贪心解码 + 后处理
@@ -207,8 +207,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | 0 | 环境搭建 | **已完成** (2026-07-28) |
-| 1 | 关键点预处理 | **进行中** (train 2485/4972, dev/test 排队) |
-| 2 | 模型训练 | 代码完成，待 Phase 1 完成后启动 |
+| 1 | 关键点预处理 | **已完成** (2026-07-28) |
+| 2 | 模型训练 | 实验进行中，关注 CHANGELOG.md |
 | 3 | CTC 解码 | 代码完成（src/decode.py） |
 | 4 | 实时推理管线 | 待开始 |
 | 5 | 旁路 YOLO | 待开始 |
@@ -257,6 +257,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。T/L=68:1 是根本原因 |
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
 | FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
+| Activity Detection | "去掉手部丢失帧，WER 就大幅下降" | collapse% 从 31.2% 降到 9.4%（-70%），但 WER 不变（66.5%→66.85%）。坍缩样本不是 WER 瓶颈，剩余错误是 token 预测错误 |
 
 ### 4. 编辑约束
 
