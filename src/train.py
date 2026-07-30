@@ -9,6 +9,7 @@
 import json
 import sys
 import argparse
+import functools
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -193,14 +194,14 @@ def main():
 
     if use_grouped:
         train_loader_bs = args.batch_size * group_size
-        train_collate = lambda batch: collate_fn_grouped(batch, group_size)
+        train_collate = functools.partial(collate_fn_grouped, group_size=group_size)
     else:
         train_loader_bs = args.batch_size
         train_collate = collate_fn
 
     train_loader = DataLoader(
         train_set, batch_size=train_loader_bs, shuffle=True,
-        num_workers=2, pin_memory=True, collate_fn=train_collate,
+        num_workers=0, pin_memory=True, collate_fn=train_collate,
     )
     dev_loader = DataLoader(
         dev_set, batch_size=1, shuffle=False,
