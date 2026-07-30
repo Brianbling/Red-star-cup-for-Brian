@@ -15,10 +15,12 @@ import numpy as np
 from pathlib import Path
 
 BASE_DIR = Path("D:/red star project")
+WORKTREE_DIR = Path(__file__).resolve().parent.parent
 KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
-CHECKPOINT_DIR = BASE_DIR / "checkpoints"
+CHECKPOINT_DIR = WORKTREE_DIR / "checkpoints"
+CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(0, str(WORKTREE_DIR / "src"))
 sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
 
 from model import SLRModel
@@ -272,7 +274,6 @@ def main():
         scheduler.step(wer)
 
         diag = compute_diagnostics(model, dev_loader, device, blank)
-        total_pred_tokens = sum(len(p) for p in all_pred_texts)
         zero_pred = sum(1 for p in all_pred_texts if len(p) == 0)
         print(f"  wer={wer:.2f}%, S={wer_result['sub_rate']:.1f}%, "
               f"D={wer_result['del_rate']:.1f}%, I={wer_result['ins_rate']:.1f}%, "
