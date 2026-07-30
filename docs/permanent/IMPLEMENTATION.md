@@ -73,6 +73,28 @@ CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 - train-01418 缺视频，CSV 行需跳过
 - 先用 10 个视频验证流程正确性再全量跑
 
+### 坐标归一化实现（Phase 1 关键补充）
+
+归一化在 `preprocess_keypoints.py` 的 `_normalize_hand()` 中完成，每只手独立计算：
+
+```python
+def _normalize_hand(coords_2d):
+    """以手腕(点0)为原点，腕→中指根(点9)距离为分母。"""
+    wrist = coords_2d[0].copy()
+    mcp9 = coords_2d[9].copy()
+    # 手腕或 MCP9 检测失败 → 整手置零
+    if np.linalg.norm(wrist) < 1e-6 or np.linalg.norm(mcp9) < 1e-6:
+        return np.zeros(42, dtype=np.float32)
+    scale = np.linalg.norm(mcp9 - wrist)
+    if scale < 1e-4:
+        return np.zeros(42, dtype=np.float32)
+    centered = coords_2d - wrist
+    return (centered / scale).astype(np.float32).reshape(42)
+```
+
+**修复前**：存储原始像素坐标（0-1920 px），同一手势在不同距离下产生完全不同的向量。
+**修复后**：无量纲坐标（约 [-3, +3]），几何尺度不变。
+
 ---
 
 ## Phase 2 — 主路模型训练（~12-24h，需 GPU）

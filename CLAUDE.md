@@ -49,8 +49,6 @@ D:/red star project/
 │   │   ├── INSPIRATION.md    # 23 条灵感、优先级投票
 │   │   └── CHANGELOG.md      # 工作日志，持续追加
 │   └── temporary/            # 实验路线/诊断，过期后删除
-│       ├── 2026-07-29-ctc-blank-repair-plan.md  # CTC blank 坍塌修复实验路线
-│       └── 2026-07-29-ctc-blank-experiment-log.md  # 实验记录
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
@@ -207,8 +205,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | 0 | 环境搭建 | **已完成** (2026-07-28) |
-| 1 | 关键点预处理 | **进行中** (train 2485/4972, dev/test 排队) |
-| 2 | 模型训练 | 代码完成，待 Phase 1 完成后启动 |
+| 1 | 关键点预处理 | **已完成** (2026-07-30，含坐标归一化) |
+| 2 | 模型训练 | **已完成** (2026-07-30，Conformer，top-478，best_wer=66.46%) |
 | 3 | CTC 解码 | 代码完成（src/decode.py） |
 | 4 | 实时推理管线 | 待开始 |
 | 5 | 旁路 YOLO | 待开始 |
@@ -257,6 +255,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。T/L=68:1 是根本原因 |
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
 | FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
+| 数据质量先于架构 | "模型不收敛就换架构" | **先查数据再查架构。** 坐标归一化缺失导致 8 轮架构实验全部无效。数据验证（归一化/标签/分布）必须在架构实验之前完成 |
 
 ### 4. 编辑约束
 

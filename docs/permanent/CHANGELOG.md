@@ -94,3 +94,31 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
 - Conformer/Transformer encoder 替代 BiLSTM
+
+## 2026-07-30
+
+### 根因定位：坐标归一化缺失（8 轮无效实验的根因）
+
+- **8 轮 CTC blank 坍塌实验全部无效**：bias init、SR-CTC、stride 降采样、BiLSTM/ConvResNet/Conformer 均无法阻止坍塌
+- **三重诊断定位根因**：
+  - 诊断 A：非 blank 帧全集中在序列第一帧（非 CTC 对齐行为，全样本仅 1 个非 blank spike）
+  - 诊断 B：全 dev 集 509 样本只输出 7 个 token，91% 集中在"的"+"了"两个高频虚词
+  - 诊断 C：自检发现 `preprocess_keypoints.py` 从未实现坐标归一化——所有 5987 .npy 存储原始像素坐标
+  - 根本原因：同一个手语动作在不同拍摄距离下产生完全不同的 84 维向量，模型学不到几何不变性，blank 是 CTC 在像素空间的最优解
+- **修复**：`preprocess_keypoints.py` 新增手腕参考点归一化（腕→中指MCP距离为分母），每只手独立计算，输出无量纲坐标
+  - 对 MCP9（中指根）增加检测失败保护——手腕或 MCP9 为零时整手坐标置零，避免用错误分母归一化
+  - Pool initializer 复用 HandLandmarker（每 worker 仅初始化一次），6 进程 ~2h 完成全量
+- **效果（归一化前后对比）**：
+  - 坐标范围：0-1920 px → [-3, +3] 无量纲
+  - 非 blank token 多样性：7 → 55（质的飞跃）
+  - zero_pred：41% → 22%（Epoch 24）
+  - WER：93-95% → 66.46%（Epoch 24，Conformer，top-478 子词表）
+- **P(blank) 拆解分析**：全局 P(blank)=95.7%，但区分帧类型后——P(blank|lost)=96.1%（手部丢失帧，blank 是正确答案），P(blank|valid)=95.6%（有效帧上 T/L=53，CTC 对齐中 blank 天然占比高）。手部丢失帧占 34.2%
+- **全量重跑预处理**：删除旧 .npy，6 进程重跑 5987 个视频，约 2h
+- **教训**：模型坍塌，先查数据再查架构。数据质量验证（归一化/标签/分布）必须在架构实验之前完成
+
+### 文档更新 (2026-07-30)
+
+- **ARCHITECTURE.md**：归一化描述从"手腕间距"修正为"腕→中指根距离"，补充每只手独立计算的细节和输出范围
+- **IMPLEMENTATION.md**：Phase 1 新增坐标归一化实现细节（修复前后对比代码）
+- **CLAUDE.md**：Landmines 表新增"不检查数据质量就跳进架构实验"陷阱条目
