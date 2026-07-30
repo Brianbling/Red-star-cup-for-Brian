@@ -94,3 +94,15 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
 - Conformer/Transformer encoder 替代 BiLSTM
+
+### 2026-07-30 — Activity Detection 训练完成 + 四项审计
+
+- **训练结果**：78 epoch early stop，best WER **66.85%** (Epoch 63)，best collapse **8.1%** (Epoch 50)
+- **collapse% 从 31.2% → 9.4%**（相对降低 70%），但 WER 几乎没变（66.5% → 66.85%）
+- **四项审计**：
+  1. **丢弃帧 = 手部丢失帧**：99.7% 是零帧（手部丢失），0.3% 是 <5帧 的短有效段（正确丢弃），0 长有效段被误杀。min_active_frames=5 无误杀
+  2. **多段样本 vs 坍缩重叠**：多段样本 81/509 (15.9%)，平均 2.3 段/样本。精确重叠需模型在原始 dev 集跑推理，但 15.9% < 31.2% 说明多段只是坍缩的部分原因
+  3. **跨段合并风险**：4 帧零分隔符，Conformer self-attention 理论上可跨过，但零帧含零信息，attention 权重应弱。需实际推断验证
+  4. **collapse% 变化**：159/509 → 49/509 (31.2% → 9.4%, -70%)
+- **核心结论**：activity detection 技术上成功定位 blank 坍缩，但 WER 没变说明坍缩样本不是 WER 瓶颈。剩余 66.85% 错误来自 token 预测错误（插入/删除/替换），而非 blank 坍缩
+- **下一步方向**：分析 token 级错误分布 (insertion/deletion/substitution)，定位 WER 真正瓶颈
