@@ -24,6 +24,8 @@ import csv
 import pickle
 import time
 import json
+import multiprocessing
+from functools import partial
 from pathlib import Path
 from collections import defaultdict
 
@@ -138,7 +140,7 @@ def load_csl_daily_labels(label_dir):
 
     video_info = {}
     for info in data["info"]:
-        video_info[info["name"]] = info["label_gloss"]
+        video_info[info["name"]] = info["label_gloss"]  # already Chinese Unicode
 
     video_split = {}
     with open(split_path, "r", encoding="utf-8") as f:
@@ -306,6 +308,22 @@ def run_slr(args, landmarker):
     print(f"Labels saved to {label_path}")
 
 
+def _csl_daily_worker(video_id, frame_dir, out_dir, model_path):
+    """Process a single CSL-Daily video (worker function for multiprocessing)."""
+    save_path = out_dir / f"{video_id}.npy"
+    if save_path.exists():
+        return video_id, 0, True, True  # skipped
+
+    vid_frame_dir = frame_dir / video_id
+    if not vid_frame_dir.is_dir():
+        return video_id, 0, False, False
+
+    landmarker = create_landmarker(model_path)
+    n_frames, ok = process_frame_sequence(landmarker, vid_frame_dir, save_path)
+    landmarker.close()
+    return video_id, n_frames, ok, False
+
+
 def run_csl_daily(args, landmarker):
     video_info, video_split = load_csl_daily_labels(args.label_dir)
 
@@ -315,43 +333,42 @@ def run_csl_daily(args, landmarker):
         splits_to_do = [args.split]
 
     frame_dir = Path(args.video_dir)
+    num_workers = getattr(args, 'num_workers', 4)
 
     for split in splits_to_do:
         out_dir = Path(args.output_dir) / split
         out_dir.mkdir(parents=True, exist_ok=True)
 
         split_videos = [vid for vid, s in video_split.items() if s == split]
+        if args.max_videos:
+            split_videos = split_videos[:args.max_videos]
+
         total = len(split_videos)
-        processed, errors = 0, 0
+        print(f"  [{split}] {total} videos, {num_workers} workers")
+
+        worker_fn = partial(_csl_daily_worker,
+                            frame_dir=frame_dir, out_dir=out_dir,
+                            model_path=args.model_path)
+
         start = time.time()
+        processed, errors, skipped = 0, 0, 0
+        with multiprocessing.Pool(processes=num_workers) as pool:
+            for video_id, n_frames, ok, was_skipped in \
+                    pool.imap_unordered(worker_fn, split_videos):
+                if was_skipped:
+                    skipped += 1
+                elif ok:
+                    processed += 1
+                else:
+                    errors += 1
+                done = processed + errors + skipped
+                if done % 200 == 0 or done == total:
+                    elapsed = time.time() - start
+                    eta = (elapsed / done) * (total - done) if done > 0 else 0
+                    print(f"  [{split}] {done}/{total} ({processed} ok, {errors} err, "
+                          f"{skipped} skip) | ETA: {eta / 60:.1f}min")
 
-        for video_id in split_videos:
-            if args.max_videos and processed >= args.max_videos:
-                break
-
-            save_path = out_dir / f"{video_id}.npy"
-            if save_path.exists():
-                continue
-
-            vid_frame_dir = frame_dir / video_id
-            if not vid_frame_dir.is_dir():
-                errors += 1
-                continue
-
-            n_frames, ok = process_frame_sequence(landmarker, vid_frame_dir, save_path)
-            if ok:
-                processed += 1
-            else:
-                errors += 1
-
-            if (processed + errors) % 200 == 0:
-                elapsed = time.time() - start
-                done = processed + errors
-                eta = (elapsed / max(done, 1)) * (total - done)
-                print(f"  [{split}] {done}/{total} ({processed} ok, {errors} err) | "
-                      f"ETA: {eta / 60:.1f}min")
-
-        print(f"  {split} done: {processed} processed, {errors} errors")
+        print(f"  {split} done: {processed} processed, {skipped} skipped, {errors} errors")
 
     label_path = Path(args.output_dir) / "labels.json"
     with open(label_path, "w", encoding="utf-8") as f:
@@ -373,6 +390,7 @@ def main():
     ap.add_argument("--output-dir", type=str, default=None)
     ap.add_argument("--model-path", type=str, default=None)
     ap.add_argument("--slr-dict-path", type=str, default=None)
+    ap.add_argument("--num-workers", type=int, default=4)
     args = ap.parse_args()
 
     BASE = Path("D:/red star project")
