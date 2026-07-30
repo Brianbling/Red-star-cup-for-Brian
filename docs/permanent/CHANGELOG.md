@@ -106,3 +106,22 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
   4. **collapse% 变化**：159/509 → 49/509 (31.2% → 9.4%, -70%)
 - **核心结论**：activity detection 技术上成功定位 blank 坍缩，但 WER 没变说明坍缩样本不是 WER 瓶颈。剩余 66.85% 错误来自 token 预测错误（插入/删除/替换），而非 blank 坍缩
 - **下一步方向**：分析 token 级错误分布 (insertion/deletion/substitution)，定位 WER 真正瓶颈
+
+### 2026-07-30 — S/D/I 分解 + clean_word 不一致修复
+
+- **S/D/I 分解**：WER=66.85%，S=341 (18.8%)，D=61 (3.4%)，I=808 (44.6%)。Insertion 占错误总数的 66.8%
+- **根因定位**：`build_vocab.py` 和 `dataset.py` 使用不同的标签清洗逻辑——
+  `build_vocab.py` 调用 `clean_word()` 去括号去数字再存词表，但 `dataset.py` 只用 `w.strip()` 后直接查 `word2idx`
+  - 含括号 token（如 `"动作（快）"`）在 `build_vocab.py` 中被清洗为 `"动作"` 存入词表
+  - `dataset.py` 用 `"动作（快）"` 查词表 → KeyError → 静默跳过
+  - 全量词表 12.7% token 被丢弃，top-478 子词表 34.3% token 被丢弃
+  - 标签跳过 → 手势帧有运动信号但无标签目标 → CTC 被迫将有手势帧训练成 blank →
+    特征矛盾 → blank 边界判断不稳定 → 推理时过度触发 → I 主导
+- **修复**：新建 `src/vocab_utils.py`，`clean_word()` 使用 depth 计数器（支持括号嵌套），
+  `build_vocab.py` 和 `dataset.py` 共享同一函数
+- **验证**：深度 ≤2 的嵌套括号（全量词表仅 3 个 unique token 不在词表中，top-478 子词表受限于覆盖率）
+- **修正了 `WER.py` 中的 D/I 标签交换 bug**：初始化 `d[i][0]` 和 `d[0][j]` 的成本分配错位，
+  且 backtrace 中 Insert 和 Delete 的操作类型与代价常量不匹配。
+  由于 DEL/INS/SUB 代价均为 1，总 WER 不受影响，但 `del_rate` 和 `ins_rate` **互换**。
+  修复后 S/D/I 报告准确，I 主导的诊断不会因此改变（修复前原代码显示 I=808）
+- **`src/train.py`**：验证时每 epoch 输出 S/D/I 分解（从 `WerList` 全量结果中读取）

@@ -68,17 +68,17 @@ def edit_distance(r, h):
     for i in range(len(r) + 1):
         for j in range(len(h) + 1):
             if i == 0:
-                d[0][j] = j * WER_COST_DEL
+                d[0][j] = j * WER_COST_INS
             elif j == 0:
-                d[i][0] = i * WER_COST_INS
+                d[i][0] = i * WER_COST_DEL
     for i in range(1, len(r) + 1):
         for j in range(1, len(h) + 1):
             if r[i - 1] == h[j - 1]:
                 d[i][j] = d[i - 1][j - 1]
             else:
                 substitute = d[i - 1][j - 1] + WER_COST_SUB
-                insert = d[i][j - 1] + WER_COST_DEL
-                delete = d[i - 1][j] + WER_COST_INS
+                insert = d[i][j - 1] + WER_COST_INS
+                delete = d[i - 1][j] + WER_COST_DEL
                 d[i][j] = min(substitute, insert, delete)
     return d
 
@@ -110,11 +110,11 @@ def get_alignment(r, h, d):
             alignlist.append("C")
             x = max(x - 1, 0)
             y = max(y - 1, 0)
-        elif y >= 1 and d[x][y] == d[x][y - 1] + WER_COST_DEL:
+        elif y >= 1 and d[x][y] == d[x][y - 1] + WER_COST_INS:
             align_hyp = " " + h[y - 1] + align_hyp
             align_ref = " " + "*" * len(h[y - 1]) + align_ref
-            alignment = " " + "D" + " " * (len(h[y - 1]) - 1) + alignment
-            alignlist.append("D")
+            alignment = " " + "I" + " " * (len(h[y - 1]) - 1) + alignment
+            alignlist.append("I")
             x = max(x, 0)
             y = max(y - 1, 0)
         elif x >= 1 and y >= 1 and d[x][y] == d[x - 1][y - 1] + WER_COST_SUB:
@@ -125,11 +125,11 @@ def get_alignment(r, h, d):
             alignlist.append("S")
             x = max(x - 1, 0)
             y = max(y - 1, 0)
-        elif x >= 1 and d[x][y] == d[x - 1][y] + WER_COST_INS:
+        elif x >= 1 and d[x][y] == d[x - 1][y] + WER_COST_DEL:
             align_hyp = " " + "*" * len(r[x - 1]) + align_hyp
             align_ref = " " + r[x - 1] + align_ref
-            alignment = " " + "I" + " " * (len(r[x - 1]) - 1) + alignment
-            alignlist.append("I")
+            alignment = " " + "D" + " " * (len(r[x - 1]) - 1) + alignment
+            alignlist.append("D")
             x = max(x - 1, 0)
             y = max(y, 0)
 
