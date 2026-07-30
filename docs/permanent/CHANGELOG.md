@@ -95,12 +95,48 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
 - Conformer/Transformer encoder 替代 BiLSTM
 
-### 2026-07-30 — Activity Detection 实现
+### 2026-07-30 — Activity Detection 训练完成 + 四项审计
 
-- **背景**：归一化修复后 P0 训练完成（Conformer + stride=4 + blank_bias=+5.32），WER 66.5% 平台化。31% 样本（159/509）在有效帧上 p_blank=100%——完全坍缩，根因是手部丢失帧过多。
-- **实现 `src/activity_detect.py`**：运行合并算法切出连续有效段。算法：标记有效帧（|kp|>1e-6）→ 收集运行列表 → 合并间隔≤3帧的相邻运行 → 保留总有效帧≥5的段 → 段间插入4帧零分隔符。全零序列安全兜底返回原序列。
-- **修改 `src/dataset.py`**：`KeypointDataset` 新增 `activity_detect` 参数，`__getitem__` 中自动切段，返回 `original_len`/`trimmed`/`frames_removed` 供统计。
-- **修改 `src/train.py`**：新增 `--activity-detect`、`--min-active-frames`、`--gap-frames` CLI 参数；每 epoch 打印 `compute_diagnostics()` 输出的 P(blank)、collapse%、zero_pred。
-- **修复 `src/model.py`**：补充 blank bias 初始化 `self.fc.bias.data[0]=5.32`（P(blank)≈0.3），之前漏写 bias init 导致 P(blank)@init=0.002。
-- **数据统计**（dev 509 样本）：15.3% 有真实中间手部丢失→多段；75.3% 仅切首尾静默帧；0 样本全零丢失；总帧量 -32.5%。train 4972 样本帧量 -25.9%。
-- **预期效果**：31% 坍缩样本的手部丢失帧被剥离，T/L 比下降，blank 最优比例自然下降，全局 WER 有望从 66.5% 降到 45-55%。
+- **训练结果**：78 epoch early stop，best WER **66.85%** (Epoch 63)，best collapse **8.1%** (Epoch 50)
+- **collapse% 从 31.2% → 9.4%**（相对降低 70%），但 WER 几乎没变（66.5% → 66.85%）
+- **四项审计**：
+  1. **丢弃帧 = 手部丢失帧**：99.7% 是零帧（手部丢失），0.3% 是 <5帧 的短有效段（正确丢弃），0 长有效段被误杀。min_active_frames=5 无误杀
+  2. **多段样本 vs 坍缩重叠**：多段样本 81/509 (15.9%)，平均 2.3 段/样本。精确重叠需模型在原始 dev 集跑推理，但 15.9% < 31.2% 说明多段只是坍缩的部分原因
+  3. **跨段合并风险**：4 帧零分隔符，Conformer self-attention 理论上可跨过，但零帧含零信息，attention 权重应弱。需实际推断验证
+  4. **collapse% 变化**：159/509 → 49/509 (31.2% → 9.4%, -70%)
+- **核心结论**：activity detection 技术上成功定位 blank 坍缩，但 WER 没变说明坍缩样本不是 WER 瓶颈。剩余 66.85% 错误来自 token 预测错误（插入/删除/替换），而非 blank 坍缩
+- **下一步方向**：分析 token 级错误分布 (insertion/deletion/substitution)，定位 WER 真正瓶颈
+
+### 2026-07-30 — S/D/I 分解 + WER.py D/I 标签交换修复
+
+- **初版 S/D/I 分解**（D/I 标签交换）：WER=66.85%，S=18.8%，D=3.4%，I=44.6%
+- **发现 WER.py D/I 标签交换 bug**：编辑距离初始化 `d[i][0]`/`d[0][j]` 成本分配错位，
+  backtrace 中 Insert/Delete 操作类型与代价常量不匹配。DEL/INS/SUB 代价为 1，总 WER 不受影响，
+  但 `del_rate` 和 `ins_rate` 互换
+- **修正后 S/D/I 分解**（旧模型在修复后 dataset 上推理）：
+  WER=68.27%，S=18.7%，**D=47.5%**，I=2.1%。**Deletion 占错误 69.6%，不是 Insertion**
+  - ref tokens 从 1810→1954（clean_word 修复后恢复 144 个之前被跳过的 token，全被删除，推高 D 约 7 个百分点）
+  - 因果链修正：标签跳过 → 对应 token 从未出现在训练中 → 从未学出 → 推理时全被删。
+    不需要复杂的"blank 边界不稳定"中间路径
+
+### 2026-07-30 — clean_word 不一致修复
+
+- **Bug**：`build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只用 `w.strip()` 查 word2idx。
+  含括号 token 静默跳过，全量词表 12.7% token 丢弃，top-478 子词表 34.3% 丢弃
+- **新建 `src/vocab_utils.py`**：`clean_word()` 用 depth 计数器（支持嵌套括号），`build_vocab.py` 和 `dataset.py` 共享
+- **`src/train.py`**：每 epoch 输出 S/D/I 分解
+- **修正 `TFNet-main/WER.py`**：D/I 标签交换
+
+### 2026-07-30 — clean_word 修复后重训结果
+
+- **训练配置**：top-478 子词表，activity detection (min=5, gap=3)，Conformer 10.4M
+  - train 4910 样本（4009 被切分，移除 25.7% 帧），dev 512 样本（409 被切分，移除 32.6% 帧）
+- **结果**：67 epoch early stop，**best WER=66.58% (Epoch 52)**
+  - Best S/D/I：S=21.3%，D=41.8%，I=3.5%，collapse=4.1%，zero_pred=21/512
+- **WER 几乎不变**：旧模型 66.85% → 重训后 66.58%，差异 <0.3 个百分点
+- **D 主导全程**：Epoch 1 D=92.8% → Epoch 52 D=41.8%。冷启动 token 在前 15 epoch 学完后，
+  D 仍然 ≥40%——模型在完整标签上仍然不敢输出
+- **S 天花板 ~21%**：模型区分 token 的能力在 ~66% WER 触顶
+- **结论**：clean_word 修复解决了数据 bug 但未改善 WER。瓶颈不在标签完整性，
+  在**特征层面**——84 维关键点坐标无法区分 478 个 token。
+  方向应转向特征增强（CNN 视觉特征拼接到关键点）

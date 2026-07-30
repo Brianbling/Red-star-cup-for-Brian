@@ -258,7 +258,10 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
 | FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
 | Activity Detection | "去掉手部丢失帧，WER 就大幅下降" | collapse% 从 31.2% 降到 9.4%（-70%），但 WER 不变（66.5%→66.85%）。坍缩样本不是 WER 瓶颈，剩余错误是 token 预测错误 |
-| clean_word 一致性 | "build_vocab 和 dataset 用同一套清洗逻辑，标签一定对得上" | `build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只 `w.strip()` 就查 word2idx → KeyError → 静默跳过。含括号 token 在训练中丢失，导致 blank 边界不稳定。**所有标签清洗必须通过 `vocab_utils.clean_word`** |
+| clean_word 一致性 | "build_vocab 和 dataset 用同一套清洗逻辑，标签一定对得上" | `build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只 `w.strip()` 就查 word2idx → KeyError → 静默跳过。已修复（`vocab_utils.clean_word` 共享函数），但重训后 WER 从 66.85%→66.58%（几乎不变），标签完整性不是当前瓶颈 |
+| WER.py D/I 交换 | "WerList 返回的 del_rate/ins_rate 就是各自含义" | 编辑距离初始化和 backtrace 中 D/I 标签交叉绑定。总 WER 不受影响（代价均为 1），已修复 |
+| clean_word 一致性 | "build_vocab 和 dataset 用同一套清洗逻辑，标签一定对得上" | `build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只 `w.strip()` 就查 word2idx → KeyError → 静默跳过。含括号 token 在训练中丢失。已修复（`vocab_utils.clean_word`），但重训后 WER 不变（66.85%→66.58%），标签完整性不是当前瓶颈 |
+| WER.py D/I 交换 | "WerList 返回的 del_rate/ins_rate 是准确的" | 编辑距离初始化和 backtrace 中 D/I 标签交叉绑定。总 WER 不受影响（代价均为 1），但 `del_rate` 和 `ins_rate` **互换**。已修复：S/D/I 均用正确语义 |
 
 ### 4. 编辑约束
 
