@@ -140,3 +140,51 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **结论**：clean_word 修复解决了数据 bug 但未改善 WER。瓶颈不在标签完整性，
   在**特征层面**——84 维关键点坐标无法区分 478 个 token。
   方向应转向特征增强（CNN 视觉特征拼接到关键点）
+
+### 2026-07-30 — 视觉特征融合实验（MobileNetV3-Small）
+
+#### 背景
+之前 visual features 已用 MobileNetV3-Small 预提取完成（4972 train / 515 dev / 500 test，576d/帧）。
+问题：576d ImageNet 特征是否对 CSL 手语识别有帮助？直接 concat（84+576=660d）曾得到 WER 84.79%、collapse 0%，
+比全量 baseline（WER 66.58%）差很多，但 collapse 消除了。需要控制变量确认根因。
+
+#### 实验设计
+三个实验，均使用 visual-only 子集（4972 样本），控制数据集大小变量：
+
+| 实验 | 配置 | 目的 |
+|------|------|------|
+| Exp A | kp-only（84d），子集 | 控制变量：子集本身是否更难 |
+| Exp B | projected fusion（84→128 + 576→128 → 256d） | 解决 576d 噪声淹没问题 |
+| 参考 | raw concat（84+576=660d） | 已有结果，collapse=0% 但 WER 差 |
+
+#### 代码变更
+- src/train.py：新增 --visual-only、--visual-fusion（raw/projected/none）、--checkpoint-dir 参数
+- src/dataset.py：新增 no_visual 参数，控制是否 concat visual features
+- src/model.py：新增 visual_fusion="projected" 模式，双线性投影层（kp_proj + vis_proj）
+- 每个实验独立 checkpoint 目录（--checkpoint-dir checkpoints/kp_only/ 等）
+
+#### 训练过程
+- Exp A 和 Exp B 均用 detached Python 进程运行（python -u ... > log 2>&1 &），避免被后台系统误杀
+- 均使用 blank penalty（threshold=0.65, weight=20.0）+ 熵正则（weight=0.01）+ stride=4 1D Conv
+- Exp A 和 Exp B 均跑到 epoch 29 时被手动停止
+
+#### 最终结果
+
+| 实验 | 样本数 | Best WER | Deletion | Collapse | 备注 |
+|------|--------|----------|----------|----------|------|
+| 全量 kp-only baseline | ~6000 | 66.58% | 41.8% | 31.2% | activity detection 后为 66.85% |
+| **Exp A** (子集 kp-only) | 4972 | **80.94%** (e29) | 68.8% | 18.3% | 仍在下降趋势中 |
+| Raw concat visual | 4972 | 84.79% | 65.6% | 0% | 之前实验 |
+| **Exp B** (projected fusion) | 4972 | **91.61%** (e26) | 84.0% | 46% | 优化困难，被噪声主导 |
+
+#### 结论
+
+1. **视觉特征消除 blank 坍塌但未改善 WER**：raw concat collapse=0%，但 WER 84.79% 比全量 baseline 66.58% 差 18 个百分点
+2. **视觉子集本身更难**：Exp A（子集 kp-only）WER 80.94% vs 全量 66.58%，差距 ~14 个百分点。过滤掉无 visual features 的 ~1000 样本恰好是简单样本
+3. **Projected fusion 更差**：Exp B（91.61%）比 raw concat（84.79%）差 7 个百分点。给 576d 噪声和 84d 关键点分配相同投影维度（128d），让噪声获得了不对等的建模容量，优化更难
+4. **ImageNet 特征不适合手语**：MobileNetV3-Small 的 576d 特征编码的是 ImageNet 物体类别（猫、车、建筑等），与手语手势几乎无关，本质是 576d 噪声淹没了 84d 有效信号
+5. **根本问题不在特征维度**：collapse 消除说明视觉特征"打破了 silence"，但替换成了错误的 token 预测。问题不在 blank 坍塌，在 token 级识别准确率
+
+#### 下一步
+- 视觉特征路线暂时搁置。需要 domain-specific 的手部视觉 encoder（如在手语数据上 fine-tune MobileNetV3），而非直接用 ImageNet 预训练特征
+- 当前最优路线：全量 kp-only + activity detection（WER 66.85%），继续分析 token 级错误分布
