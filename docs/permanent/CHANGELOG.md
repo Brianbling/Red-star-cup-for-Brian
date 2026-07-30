@@ -187,4 +187,62 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 
 #### 下一步
 - 视觉特征路线暂时搁置。需要 domain-specific 的手部视觉 encoder（如在手语数据上 fine-tune MobileNetV3），而非直接用 ImageNet 预训练特征
+
+## 2026-07-31
+
+### 零成本优化路线实验 — 三项均未达预期
+
+目标：在不改模型架构、不加新数据的前提下，通过训练/解码优化将 WER 从 66.58% 降到 50-54%。
+
+#### 实验矩阵
+
+| 实验 | 配置 | Best WER | vs Baseline | 耗时 |
+|------|------|----------|-------------|------|
+| Baseline (best.pt) | bs=1, no augment, greedy | 66.58% | — | — |
+| **Exp-1** | grouped bs=4 | **68.83%** | 退步 2.3pp | 66 epochs |
+| **Exp-2** | bs=4 + temporal augment | **75.69%** | 退步 9.1pp | 89 epochs |
+| **Exp-3** | beam search (beam=3) | 60.00%* | 持平* | 10 样本测试 |
+
+*Exp-3 仅测试 10 样本，greedy 和 beam 结果完全一致。
+
+#### Exp-1：Grouped Padding (bs=4)
+
+- 预期 2-4pp 改善，实际退步 2.3pp
+- 分组 padding 减少了填充量（~60%→~20%），但每组 B=2-4 样本，有效 batch 变小
+- S（替换）从 18% 波动到 18%，D（删除）从 41.8% 波动到 47-53%，collapse 10% 左右
+- 分组后 blank penalty 失效风险高，batch 小导致梯度噪声大
+- **结论**：分组 padding 对 CTC 训练无帮助，序列长度差异本身是有效的正则化
+
+#### Exp-2：时序增强 (temporal_scale + jitter + mask)
+
+- 预期 5-7pp 改善（这是零成本路线的主要收益来源），实际退步 9.1pp
+- temporal_scale 改变序列长度（0.8-1.2x），坐标 jitter（σ=0.005），关键点 mask（5%）
+- S 从 18% 飙到 28-29%：增强引入了模型无法消化的变化，token 预测更不准
+- D 保持在 42-43%（与 Exp-1 相近），collapse 7.8%（低于 Exp-1 的 10%）
+- **结论**：在 84d 低维特征空间下，坐标级增强的噪声大于信号。数据量 ~5K 不足，增强放大了方差而非提升泛化
+
+#### Exp-3：CTC Prefix Beam Search (beam=3)
+
+- 预期 5-8pp 改善，实际 0pp
+- 每样本 ~4.1s（比贪心 0.05s 慢 80x），512 样本需 ~35 分钟
+- Greedy 和 beam 输出完全一致：模型 P(blank)≈0.77，概率分布过于尖锐，无备选路径可探索
+- **结论**：beam search 只在模型输出足够"犹豫"时有价值，当前模型太偏 blank，多路径探索不到替代 token
+
+#### 根本原因
+
+数据量不足（~5K 样本）是 WER 瓶颈。三项优化思路在理论上正确（分组 padding 减少填充浪费、增强提升泛化、beam search 替代贪心），但在 5K 数据规模下：
+- 分组 padding 减小的填充量不足以抵消 batch 变小带来的梯度噪声
+- 坐标增强在低维特征下信噪比太差
+- 模型的概率分布过于尖锐，beam search 和 greedy 等价
+
+**下一步**：要突破 66.58% 的平台，需要更多数据或预训练模型，而非训练/解码侧的工程优化。
+
+#### 代码变更
+
+- **新增** `src/augmentation.py` — 时序增强函数
+- **新增** `src/beam_quick_test.py` — beam search 快速验证（10 样本）
+- **新增** `src/validate_beam.py` — beam search 全量验证脚本
+- **修改** `src/dataset.py` — `collate_fn_grouped` + augment 集成
+- **修改** `src/decode.py` — `ctc_prefix_beam_search`
+- **修改** `src/train.py` — `--group-size`/`--augment`/`--beam-width` 参数
 - 当前最优路线：全量 kp-only + activity detection（WER 66.85%），继续分析 token 级错误分布

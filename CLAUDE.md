@@ -261,6 +261,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Visual Features | "MobileNetV3-Small 576d 特征能提升手语识别" | ImageNet 预训练特征编码物体类别（猫、车），与手语无关。Raw concat WER 84.79%（collapse=0%），比 kp-only 66.58% 差 18pp。Projected fusion 更差（91.61%），因噪声获得了不对等建模容量。collapse 消除但 token 预测错误取代了它 |
 | clean_word 一致性 | "build_vocab 和 dataset 用同一套清洗逻辑，标签一定对得上" | `build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只 `w.strip()` 就查 word2idx → KeyError → 静默跳过。含括号 token 在训练中丢失。已修复（`vocab_utils.clean_word`），但重训后 WER 不变（66.85%→66.58%），标签完整性不是当前瓶颈 |
 | WER.py D/I 交换 | "WerList 返回的 del_rate/ins_rate 是准确的" | 编辑距离初始化和 backtrace 中 D/I 标签交叉绑定。总 WER 不受影响（代价均为 1），但 `del_rate` 和 `ins_rate` **互换**。已修复：S/D/I 均用正确语义 |
+| 零成本优化 | "分组 padding/增强/beam search 能降 WER 12-17pp" | 三项均未达预期。Grouped bs=4 WER 68.83%（退步 2.3pp）；augment WER 75.69%（退步 9.1pp）；beam=3 WER 与 greedy 完全一致。5K 数据量下，工程优化无法突破 WER 平台。需要更多数据或预训练模型 |
 
 ### 4. 编辑约束
 
