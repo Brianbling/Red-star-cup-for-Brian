@@ -152,13 +152,21 @@ else:
 | 手部丢失清缓存帧数 M | 30 帧 (~1s) | 连续丢失才清 |
 
 ### 5. 时序模型
-- **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维
-- **BiLSTM**：2 层双向 LSTM，hidden=512（独立实现，未复用 TFNet）
+- **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维，stride=4 降采样（T→T/4）
+- **Conformer Encoder**：4 层 Conformer（d_model=256, 4 heads），替代原 BiLSTM
 - **Linear + LogSoftmax**：输出到词表大小的 log 概率
+- **可选视觉融合**：支持 MobileNetV3-Small 576d 特征融合（`--visual-fusion raw/projected`），但实验证明 ImageNet 特征不适用于手语，当前默认 kp-only
 
 ### 6. CTC 解码 + 后处理
 - 贪心解码（取每帧最大概率的词）
 - 后处理：连续重复字符合并 + blank 标签过滤
+- blank penalty 正则（threshold=0.65, weight=20.0）防止 blank 坍塌
+- 熵正则（weight=0.01）鼓励多样化输出
+
+### 7. Activity Detection（数据预处理）
+- 训练时检测手部丢失帧（全零帧），切掉首尾丢失段
+- 保留连续有效段（≥5 帧），间隔 ≤3 帧的短丢失合并
+- 效果：collapse 31.2% → 9.4%（-70%），但 WER 未显著改善（token 错误是主要瓶颈）
 
 ---
 
@@ -171,6 +179,7 @@ else:
 | Beam search | 实时场景太慢，贪心够用 |
 | 近形手势混淆 | 属训练数据和模型能力问题，非架构问题 |
 | MediaPipe Holistic | Hands 够用，肢体语义不明显时省算力 |
+| MobileNetV3 视觉特征 | ImageNet 预训练特征与手语无关，实验证明反而降低 WER（84.79% vs 66.58%）。domain-specific 视觉 encoder 留 v2 |
 
 ---
 

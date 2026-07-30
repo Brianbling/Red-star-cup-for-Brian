@@ -10,7 +10,7 @@
 摄像头 → 统一预处理 → MediaPipe Hands (42点关键点)
                       │
                       ├─ 主路: 置信度清洗 → 坐标归一化 → 滑动窗口(3s)
-                      │        → 1D Conv + BiLSTM → CTC解码 → 后处理去重 → 文本
+                      │        → 1D Conv + Conformer → CTC解码 → 后处理去重 → 文本
                       │
                       └─ 旁路: YOLO 静态手势分类(每5帧) → 三重AND门控 → 静态词
                                ↑ 可关闭，低算力设备退化为纯时序识别
@@ -49,12 +49,10 @@ D:/red star project/
 │   │   ├── INSPIRATION.md    # 23 条灵感、优先级投票
 │   │   └── CHANGELOG.md      # 工作日志，持续追加
 │   └── temporary/            # 实验路线/诊断，过期后删除
-│       ├── 2026-07-29-ctc-blank-repair-plan.md  # CTC blank 坍塌修复实验路线
-│       └── 2026-07-29-ctc-blank-experiment-log.md  # 实验记录
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv(stride=2×2) + Conformer(4层) + Linear + LogSoftmax
+│   ├── model.py              # 1D Conv(stride=4) + Conformer(4层) + Linear + LogSoftmax
 │   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
 │   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
 │   └── decode.py             # CTC 贪心解码 + 后处理
@@ -63,6 +61,7 @@ D:/red star project/
 │   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
 │   ├── label/{train,dev,test}.csv
 │   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)，5987 文件
+│   └── visual_features/{train,dev,test}/  # MobileNetV3-Small 视觉特征 (.npy)，5987 文件
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
 ├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续
@@ -101,8 +100,8 @@ D:/red star project/
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
 - MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
-- `src/model.py` — 1D Conv + BiLSTM + Linear（独立实现，未复用 TFNet BiLSTM.py）
-- `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
+- `src/model.py` — 1D Conv(stride=4) + Conformer(4层) + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/train.py` — CTC Loss 训练脚本（blank penalty + 熵正则，独立实现，未复用 TFNet Train.py）
 - `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
 - TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
 - ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定，未使用）
@@ -125,7 +124,7 @@ YOLO 旁路可关闭，低算力设备纯时序识别。
 
 ```
 CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一个文件)
-→ Dataset/DataLoader → 1D Conv + BiLSTM + CTC Loss → best.pt
+→ Dataset/DataLoader → 1D Conv(stride=4) + Conformer + CTC Loss → best.pt
 ```
 
 ## 推理流程（实时）
@@ -134,7 +133,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 1. `preprocess.py` — 预处理 + MediaPipe Hands + 置信度清洗 + 坐标归一化
 2. `window.py` — 滑动窗口（3s/90帧 deque）
 3. `arbitration.py` — 融合仲裁状态机
-4. `model.py` — 1D Conv + BiLSTM + Linear
+4. `model.py` — 1D Conv(stride=4) + Conformer(4层) + Linear
 5. `decode.py` — CTC 贪心解码 + 后处理
 6. `inference.py` — 摄像头主循环，串起以上模块
 
@@ -175,9 +174,9 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | MediaPipe Hands 推理 | 调 API | ~20 行 | `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
 | YOLOv8n 分类训练 | 调 API | 数据准备 ~100 行 | `ultralytics`, `model.train()` |
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
-| BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
+| BiLSTM | **自己写** | — | 已替换为 Conformer（4层），解决 CTC blank 坍塌 |
 | 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
-| 模型架构 model.py | **自己写** | ~50 行 | 1D Conv + BiLSTM + Linear |
+| 模型架构 model.py | **自己写** | ~100 行 | 1D Conv(stride=4) + Conformer(4层) + Linear |
 | Dataset/DataLoader | **自己写** | ~90 行 | 读 .npy + 标签解析 + collate_fn |
 | 训练脚本 | **自己写** | ~180 行 | 独立实现，未复用 TFNet Train.py |
 | CTC 贪心解码 | **自己写** | ~40 行 | argmax + unique_consecutive + 去 blank |
@@ -208,8 +207,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 |-------|------|------|
 | 0 | 环境搭建 | **已完成** (2026-07-28) |
 | 1 | 关键点预处理 | **已完成** (2026-07-28) |
-| 2 | 模型训练 | 实验进行中，关注 CHANGELOG.md |
-| 3 | CTC 解码 | 代码完成（src/decode.py） |
+| 2 | 模型训练 | baseline WER 66.85%，视觉特征实验完成（结论：ImageNet 特征不适用） |
+| 3 | CTC 解码 | 代码完成（src/decode.py），blank penalty + 熵正则已集成 |
 | 4 | 实时推理管线 | 待开始 |
 | 5 | 旁路 YOLO | 待开始 |
 | 6 | 联调测试 | 待开始 |
@@ -258,6 +257,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
 | FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
 | Activity Detection | "去掉手部丢失帧，WER 就大幅下降" | collapse% 从 31.2% 降到 9.4%（-70%），但 WER 不变（66.5%→66.85%）。坍缩样本不是 WER 瓶颈，剩余错误是 token 预测错误 |
+| Visual Features | "MobileNetV3-Small 576d 特征能提升手语识别" | ImageNet 预训练特征编码物体类别（猫、车），与手语无关。Raw concat WER 84.79%（collapse=0%），比 kp-only 66.58% 差 18pp。Projected fusion 更差（91.61%），因噪声获得了不对等建模容量。collapse 消除但 token 预测错误取代了它 |
 
 ### 4. 编辑约束
 

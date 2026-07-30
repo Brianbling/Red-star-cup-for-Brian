@@ -13,7 +13,8 @@ from vocab_utils import clean_word
 
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx, activity_detect=False,
-                 min_active_frames=5, gap_frames=3, visual_only=False):
+                 min_active_frames=5, gap_frames=3, visual_only=False,
+                 no_visual=False):
         self.base_dir = Path(base_dir)
         self.keypoint_dir = self.base_dir / "keypoints" / split
         self.visual_dir = self.base_dir / "visual_features" / split
@@ -22,6 +23,7 @@ class KeypointDataset(Dataset):
         self.min_active_frames = min_active_frames
         self.gap_frames = gap_frames
         self.visual_only = visual_only
+        self.no_visual = no_visual
         self.samples = []  # [(video_id, token_ids, has_visual)]
 
         label_path = self.base_dir / "label" / f"{split}.csv"
@@ -65,15 +67,18 @@ class KeypointDataset(Dataset):
         video_id, token_ids, _ = self.samples[index]
         kp_path = self.keypoint_dir / f"{video_id}.npy"
         kp = np.load(str(kp_path)).astype(np.float32)  # (T, 84)
-        vf = self._load_visual(video_id)
 
-        if vf is not None:
-            if len(vf) != len(kp):
-                min_len = min(len(kp), len(vf))
-                kp = kp[:min_len]
-                vf = vf[:min_len]
+        if self.no_visual:
+            vf = None
         else:
-            vf = np.zeros((len(kp), 576), dtype=np.float32)
+            vf = self._load_visual(video_id)
+            if vf is not None:
+                if len(vf) != len(kp):
+                    min_len = min(len(kp), len(vf))
+                    kp = kp[:min_len]
+                    vf = vf[:min_len]
+            else:
+                vf = np.zeros((len(kp), 576), dtype=np.float32)
 
         original_len = len(kp)
         trimmed = False
@@ -85,13 +90,17 @@ class KeypointDataset(Dataset):
 
             if len(segments) > 0:
                 kp_seg = extract_active_frames(kp, segments)
-                vf_seg = extract_active_frames(vf, segments)
                 trimmed = len(kp_seg) < original_len
                 frames_removed = original_len - len(kp_seg)
                 kp = kp_seg
-                vf = vf_seg
+                if not self.no_visual:
+                    vf_seg = extract_active_frames(vf, segments)
+                    vf = vf_seg
 
-        features = np.concatenate([kp, vf.astype(np.float32)], axis=1)
+        if self.no_visual:
+            features = kp
+        else:
+            features = np.concatenate([kp, vf.astype(np.float32)], axis=1)
         features = torch.from_numpy(features).float()
         return {
             "features": features,

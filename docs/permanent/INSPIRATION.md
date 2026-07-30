@@ -334,3 +334,10 @@ v2+: attention rescoring (#13) 对 nbest 做重排序
 - **教训**：跨 worktree 对比同名文件时，必须用  命令验证，不能靠 Read 工具输出做判断
 - **修复**：3 条遗漏已补入分支；根目录文档用分支版本覆盖
 
+### LL-2: ImageNet 预训练视觉特征不适用于手语
+- **日期**：2026-07-30
+- **问题**：MobileNetV3-Small ImageNet 预训练的 576d 特征用于手语识别，WER 从 66.58% 升到 84.79%（raw concat）和 91.61%（projected fusion）
+- **根因**：ImageNet 特征编码物体类别（猫、车、建筑），与手语手势的语义空间几乎正交。576d 噪声淹没了 84d 有效关键点信号
+- **教训**：通用视觉 backbone 的预训练特征不是免费的——领域不匹配时，高维特征就是高维噪声。手语需要 domain-specific 的手部视觉 encoder（如在手语数据上 fine-tune）
+- **修复**：视觉融合路线暂搁置，当前最优路线为 kp-only + activity detection（WER 66.85%）
+

@@ -92,12 +92,21 @@ CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 
 ### 2.3 模型架构
 ```
-Input (T, 84)
-  → 1D Conv (kernel=3, 84→256) + ReLU + BN
-  → BiLSTM (input=256, hidden=512, num_layers=2)
-  → Linear (512 → vocab_size+1)   # +1 for blank
+Input (T, 84) 或 (T, 660)  # 660 为 kp+visual concat 模式
+  → 1D Conv (kernel=5, stride=4, 84→256) + ReLU + BN  # T→T/4
+  → Conformer Encoder × 4 (d_model=256, heads=4, ff=1024, conv_kernel=15)
+  → Linear (256 → vocab_size)
   → LogSoftmax
 ```
+
+实际参数量：~13-15M（视 fusion 模式）。Conformer 替代了原 BiLSTM 以解决 CTC blank 坍塌问题。
+
+**视觉融合模式**（通过 `--visual-fusion` 控制）：
+- `none`：纯 kp-only，84d 输入
+- `raw`：直接 concat kp(84d) + visual(576d) = 660d 输入
+- `projected`：双线性投影 kp→128d + visual→128d → concat 256d 输入
+
+**实验结论（2026-07-30）**：raw concat collapse=0% 但 WER=84.79%（比 kp-only 66.58% 差），projected 更差（91.61%）。MobileNetV3-Small ImageNet 特征编码物体类别，对 CSL 手语无效。视觉融合路线暂搁置。
 
 ### 2.4 训练
 - Loss: CTC Loss，blank=0
