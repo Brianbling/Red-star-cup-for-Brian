@@ -13,7 +13,7 @@ from vocab_utils import clean_word
 
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx, activity_detect=False,
-                 min_active_frames=5, gap_frames=3):
+                 min_active_frames=5, gap_frames=3, visual_only=False):
         self.base_dir = Path(base_dir)
         self.keypoint_dir = self.base_dir / "keypoints" / split
         self.visual_dir = self.base_dir / "visual_features" / split
@@ -21,6 +21,7 @@ class KeypointDataset(Dataset):
         self.activity_detect = activity_detect
         self.min_active_frames = min_active_frames
         self.gap_frames = gap_frames
+        self.visual_only = visual_only
         self.samples = []  # [(video_id, token_ids, has_visual)]
 
         label_path = self.base_dir / "label" / f"{split}.csv"
@@ -39,6 +40,8 @@ class KeypointDataset(Dataset):
                 npy_path = self.keypoint_dir / f"{video_id}.npy"
                 if npy_path.exists():
                     has_visual = (self.visual_dir / f"{video_id}.npy").exists()
+                    if self.visual_only and not has_visual:
+                        continue
                     self.samples.append((video_id, token_ids, has_visual))
 
     def _gloss_to_ids(self, gloss):
@@ -69,22 +72,26 @@ class KeypointDataset(Dataset):
                 min_len = min(len(kp), len(vf))
                 kp = kp[:min_len]
                 vf = vf[:min_len]
-            features = np.concatenate([kp, vf.astype(np.float32)], axis=1)  # (T, 660)
         else:
-            vf_pad = np.zeros((len(kp), 576), dtype=np.float32)
-            features = np.concatenate([kp, vf_pad], axis=1)
+            vf = np.zeros((len(kp), 576), dtype=np.float32)
 
-        original_len = len(features)
+        original_len = len(kp)
         trimmed = False
         frames_removed = 0
 
         if self.activity_detect:
             segments = segment_active_regions(
-                features, self.min_active_frames, self.gap_frames)
-            features = extract_active_frames(features, segments)
-            trimmed = len(segments) > 0 and len(features) < original_len
-            frames_removed = original_len - len(features) if trimmed else 0
+                kp, self.min_active_frames, self.gap_frames)
 
+            if len(segments) > 0:
+                kp_seg = extract_active_frames(kp, segments)
+                vf_seg = extract_active_frames(vf, segments)
+                trimmed = len(kp_seg) < original_len
+                frames_removed = original_len - len(kp_seg)
+                kp = kp_seg
+                vf = vf_seg
+
+        features = np.concatenate([kp, vf.astype(np.float32)], axis=1)
         features = torch.from_numpy(features).float()
         return {
             "features": features,
