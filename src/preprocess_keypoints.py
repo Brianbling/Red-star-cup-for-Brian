@@ -173,7 +173,10 @@ def process_frame_sequence(landmarker, frame_dir, save_path):
 
     frames = []
     for jpg_path in jpgs:
-        frame_bgr = cv2.imread(str(jpg_path))
+        with open(jpg_path, "rb") as f:
+            raw = f.read()
+        buf = np.frombuffer(raw, dtype=np.uint8)
+        frame_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if frame_bgr is None:
             continue
         kp = extract_keypoints(landmarker, frame_bgr)
