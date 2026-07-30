@@ -18,7 +18,7 @@ from pathlib import Path
 
 BASE_DIR = Path("D:/red star project")
 WORKTREE_DIR = Path(__file__).resolve().parent.parent
-KEYPOINT_BASE = BASE_DIR / "CE-CSL/CE-CSL"
+KEYPOINT_BASE = Path("E:/CE-CSL/CE-CSL")
 DEFAULT_CHECKPOINT_DIR = WORKTREE_DIR / "checkpoints"
 
 sys.path.insert(0, str(WORKTREE_DIR / "src"))
