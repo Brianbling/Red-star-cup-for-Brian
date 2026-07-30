@@ -28,6 +28,8 @@ class SLRModel(nn.Module):
             batch_first=False,
         )
         self.fc = nn.Linear(hidden_size * 2, vocab_size)
+        nn.init.constant_(self.fc.bias, 0.0)
+        self.fc.bias.data[0] = 5.32  # P(blank) = σ(5.32) ≈ 0.3
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, x, input_lengths):
