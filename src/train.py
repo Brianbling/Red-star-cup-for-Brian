@@ -119,6 +119,8 @@ def main():
                         help="Fusion mode: raw=concat, projected=separate projection, none=kp-only")
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Override checkpoint save directory")
+    parser.add_argument("--blank-bias", type=float, default=5.32,
+                        help="Initial FC bias for blank token (0.0=uniform start, 5.32=legacy)")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -210,7 +212,8 @@ def main():
 
     input_dim = 84 if no_visual else 660
     model = SLRModel(vocab_size=vocab_size, input_dim=input_dim,
-                     visual_fusion=args.visual_fusion).to(device)
+                     visual_fusion=args.visual_fusion,
+                     blank_bias=args.blank_bias).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
 
     diag = compute_diagnostics(model, dev_loader, device, blank, beam_width)

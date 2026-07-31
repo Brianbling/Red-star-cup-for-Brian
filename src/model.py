@@ -14,7 +14,7 @@ import torch.nn as nn
 class SLRModel(nn.Module):
     def __init__(self, vocab_size, input_dim=660, conv_dim=256, hidden_size=512,
                  num_layers=2, dropout=0.3, visual_fusion="raw",
-                 kp_dim=84, vis_dim=576, fusion_dim=128):
+                 kp_dim=84, vis_dim=576, fusion_dim=128, blank_bias=5.32):
         super().__init__()
         self.visual_fusion = visual_fusion
 
@@ -44,7 +44,7 @@ class SLRModel(nn.Module):
         )
         self.fc = nn.Linear(hidden_size * 2, vocab_size)
         nn.init.constant_(self.fc.bias, 0.0)
-        self.fc.bias.data[0] = 5.32
+        self.fc.bias.data[0] = blank_bias
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, x, input_lengths):
