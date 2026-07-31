@@ -87,13 +87,13 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 3. **`zero_infinity=True` 是毒药**：inf batch 被丢弃后 loss 表面下降，实际没学到东西
 4. **BiLSTM + CTC 天然易 blank 坍塌**：BiLSTM 在长 T/L 比下尤易塌陷（T/L=68:1），通过 1D Conv stride=2×2 级联（总 /4）+ blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 联合解决
 
-#### 尚待尝试
+#### 尚待尝试（后续均已解决，见各日期条目）
 
-- stride=4 + 适度 blank bias（~-0.1，非 -4.0）
-- `zero_infinity=True` + stride=4（让 inf batch 跳过而非硬撑梯度爆炸）
-- 1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）
-- 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
-- Conformer/Transformer encoder 替代 BiLSTM（**已放弃——BiLSTM 实验通过 blank_bias + blank penalty + activity detection 解决坍塌，Conformer 未在代码中实现**）
+- ~~stride=4 + 适度 blank bias（~-0.1，非 -4.0）~~ → 最终采用 **blank_bias=+5.32**（2026-07-31 验证必要性，见零成本优化节）
+- ~~`zero_infinity=True` + stride=4（让 inf batch 跳过而非硬撑梯度爆炸）~~ → 训练改为 `zero_infinity=False` + 跳过 inf/nan batch
+- ~~1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）~~ → 未采纳，模型架构不是瓶颈
+- ~~先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据~~ → 未采纳，用 activity detection + stride=2×2 级联解决
+- ~~Conformer/Transformer encoder 替代 BiLSTM~~ → **未采纳**。实际模型保持 BiLSTM，配合 blank_bias + blank penalty + activity detection 解决坍塌（文档曾误标为 Conformer，09d3372 同步错误，2026-07-31 已更正）
 
 ### 2026-07-30 — Activity Detection 训练完成 + 四项审计
 
@@ -237,6 +237,11 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 模型的概率分布过于尖锐，beam search 和 greedy 等价
 - **blank_bias=0 会让模型在 1 epoch 内 P(blank) 从 0→1.0**，+5.32 是正确设计
 
+### blank_bias=0 验证（为什么 +5.32 是正确初始化）
+
+- 去掉 `fc.bias.data[0] = 5.32` 后训练：**P(blank) 在 1 epoch 内从 0% 冲到 ~100%**，blank 坍塌立刻复现
+- 说明 +5.32（P(blank)=σ(5.32)≈0.3）不是 hack，而是必要初始化——给 blank 一个合理先验，既不让它占绝对优势，也不完全压死（对比 -4.0 时模型死锁，WER=100% 永远不动）
+
 **下一步**：要突破 66.58% 的平台，需要更多数据或预训练模型，而非训练/解码侧的工程优化。
 
 #### 代码变更
@@ -247,6 +252,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **修改** `src/dataset.py` — `collate_fn_grouped` + augment 集成
 - **修改** `src/decode.py` — `ctc_prefix_beam_search`
 - **修改** `src/train.py` — `--group-size`/`--augment`/`--beam-width` 参数
+- 数据迁移：KEYPOINT_BASE → `E:/CE-CSL/CE-CSL`（CE-CSL 与 CSL-Daily 数据集从 D 盘迁移至 E 盘）
 - 当前最优路线：全量 kp-only + activity detection（WER 66.85%），继续分析 token 级错误分布
 
 ### 2026-07-31 — 数据扩展双线并行（isolated words + L1290 YOLO）
