@@ -13,6 +13,7 @@
 - workers=0（Windows 兼容）
 - 静态手势分类用途：只关心每张图里的手势检测框类别，验证看 mAP
 """
+import argparse
 import os
 
 from ultralytics import YOLO
@@ -21,6 +22,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume", action="store_true", default=False,
+                        help="Resume from runs/l1290/weights/last.pt")
+    args = parser.parse_args()
+
+    if args.resume:
+        model = YOLO(os.path.join(HERE, "runs/l1290/weights/last.pt"))
+        model.train(resume=True)
+        return
+
     model = YOLO(os.path.join(HERE, "yolov8s.pt"))
     model.train(
         data=os.path.join(HERE, "l1290_data.yaml"),

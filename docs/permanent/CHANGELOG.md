@@ -295,3 +295,29 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - 两实例结果**交叉一致**（±1.5pp），训练轨迹 = baseline 冷启动复跑（blank 坍塌→恢复，仍在下降）
 - **结论**：归一化是 baseline 已有状态，**不是 WER 瓶颈**。对已归一化数据再归一化不可能改变 WER。真实 raw-vs-normalized 对比无法做（原始坐标已不存在）
 - 与既有结论一致：**瓶颈是数据量（~5K）**，下一步数据扩展（孤立词 94 已交付 + CSL-Daily 20K）
+
+### 2026-08-01 — L1290 YOLO 训练完成【完成】
+
+- **训练配置**：yolov8s.pt（COCO 预训练）+ l1290_data.yaml，imgsz=640，batch=16，epochs=100，workers=0，AdamW(lr 自适应)
+- **训练中途被外部杀死一次**（epoch 35，无 traceback，疑似父 shell 清理）。用 `train_l1290.py --resume`（新增 flag，从 last.pt 恢复）以 PowerShell Start-Process 脱离会话重启，从 epoch 35 续跑到 100
+- **最终指标**（val 210 图）：
+  - 最终 epoch 100：P=0.982，R=0.985，**mAP50=0.983**，mAP50-95=0.795
+  - **最优 mAP50=0.985**（epoch 18），最优 mAP50-95=0.805（epoch 55）
+  - epoch ~20 后 mAP 即达饱和（0.98+），后续为损失微调
+- **结论**：L1290 35 类静态手势分类在 COCO 预训练下 100 epoch 收敛良好，作为旁路 YOLO 静态手势识别的权重候选（`YOLOv8/runs/l1290/weights/best.pt`）
+- **顺带**：`src/preprocess_keypoints.py` 合入 Agent D 的 `normalize_hand()`（wrist 原点 + MCP9 距离归一化），与 E: 已归一化数据公式一致，经功能测试（wrist→origin、MCP9→distance 1.0、退化尺度回退 0.1）
+
+## 2026-08-01 — 全实验总结：数据量（~5K）是 WER 瓶颈的唯一结论
+
+8 条 agent 线全部完成（A 视觉 ×2、C 文档 ×2、D 归一化 ×2、孤立词、L1290）。全部受控实验均指向同一结论：
+
+| 实验线 | 假设 | 结果 | 结论 |
+|--------|------|------|------|
+| Baseline | 当前最优 | WER 66.58% | — |
+| 零成本优化 ×3 | 分组 padding / 时序增强 / beam search | 68.83% / 75.69% / 0pp | 均退步或不改善 |
+| Visual features | MobileNetV3 特征提升识别 | 84.79% / 91.61% | ImageNet 特征与手语无关，非瓶颈 |
+| Agent D 归一化 | "归一化未实现" | 数据早已归一化，复归化无效 | 归一化不是瓶颈 |
+| Isolated words | 数据扩展（94 孤立词混入） | 代码交付，未重训 | 数据量路线 |
+| **L1290 YOLO** | 旁路静态手势分类 | **mAP50=0.985** | 旁路就绪 |
+
+**唯一结论**：WER 66.58% 的天花板来自数据量（~5K 连续句样本），而非模型架构、特征维度、解码策略或归一化。下一步突破只能靠数据扩展（CSL-Daily ~20K 或 SLR 25K 孤立词预训练）。
