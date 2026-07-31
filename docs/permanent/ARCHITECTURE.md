@@ -164,7 +164,7 @@ else:
 ### 6. CTC 解码 + 后处理
 - 贪心解码（取每帧最大概率的词）
 - 后处理：连续重复字符合并 + blank 标签过滤
-- blank penalty 正则（threshold=0.65, weight=20.0）防止 blank 坍塌
+- blank penalty 正则（threshold=0.55, weight=20.0）防止 blank 坍塌
 - 熵正则（weight=0.01）鼓励多样化输出
 
 ### 7. Activity Detection（数据预处理）

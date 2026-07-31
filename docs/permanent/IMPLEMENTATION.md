@@ -118,7 +118,7 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 - Scheduler: ReduceLROnPlateau, patience=5, factor=0.5
 - Early stopping: patience=15 on dev WER（当前实现）
 - Epochs: 50-100
-- blank penalty（threshold=0.65, weight=20.0）+ 熵正则（weight=0.01）
+- blank penalty（threshold=0.55, weight=20.0）+ 熵正则（weight=0.01）
 - 每个 epoch 后跑 dev set 验证 WER + S/D/I + collapse%
 - 保存 best.pt + last.pt 到 `checkpoints/`
 
@@ -127,7 +127,7 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 |------|------|----------|
 | 2026-07-28 | 原始 baseline（BiLSTM, 原始坐标, batch=1） | 93.15% |
 | 2026-07-29 | + 坐标归一化 / top-478 子词表 / blank_bias | ~93-95%（blank 坍塌） |
-| 2026-07-30 | + stride=4 + blank penalty + 熵正则 + activity detection | 66.85% |
+| 2026-07-30 | + 1D Conv stride=2×2 级联 + blank penalty + 熵正则 + activity detection | 66.85% |
 | 2026-07-30 | + clean_word 一致性修复重训 | 66.58% |
 | 2026-07-31 | 零成本优化（分组 padding / 时序增强 / beam search） | 全部退步或不改善 |
 | 2026-08-01 | 归一化对照（Agent D）：数据本已归一化，复归化无效 | 84.90-96.52%（冷启动轨迹，交叉一致） |
@@ -144,7 +144,7 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 | 建议 | 先跑 3-5 epoch 看 loss 下降趋势，正常再全量 |
 
 ### 2.6 风险
-- **CTC blank 坍塌**：核心风险（T/L=68:1）。已通过 stride=4 + blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 解决
+- **CTC blank 坍塌**：核心风险（T/L=68:1）。已通过 1D Conv stride=2×2 级联（总 /4）+ blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 解决
 - **全零帧过多**：手部丢失严重的话，activity_detect.py 已实现切分
 - **WER 平台（~66%）**：数据量瓶颈，非模型问题。工程优化（padding/增强/beam search）均已证明无效
 
@@ -239,7 +239,7 @@ def ctc_greedy_decode(logits):
 
 ### 4.3 风险
 - **MediaPipe 实时推理延迟**：实际测试下来如果 >50ms/帧，30fps 跟不住，需要降分辨率或跳帧
-- **模型推理延迟**：BiLSTM 序列长度 22（90 帧窗口 / stride 4）时推理应该 <10ms，问题不大
+- **模型推理延迟**：BiLSTM 序列长度 22（90 帧窗口 / 总降采样 /4）时推理应该 <10ms，问题不大
 - **YOLO 每 5 帧**：如果 YOLOv8n 推理 >50ms，可以改为每 10 帧
 
 ---

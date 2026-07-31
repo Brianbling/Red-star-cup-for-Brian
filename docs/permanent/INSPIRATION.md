@@ -151,7 +151,7 @@
 - **内容**：以左右肩距离为参考尺度做坐标归一化 `pose.normalize(normalize_info)`，消除体型和相机距离差异。支持 kp_wise/global_xyz 三种模式
 - **好处**：预处理阶段完成，训练零开销；肩距比手腕间距更稳定（手腕快速运动时波动大）
 - **代价**：MediaPipe Hands 不含肩膀点，需改用 Holistic（违反 v1 约束）
-- **适用场景**：v2 若引入 Holistic 可用；v1 维持手腕间距
+- **适用场景**：v2 若引入 Holistic 可用；v1 维持手腕间距<br>注：项目现行归一化分母是"腕→中指根距离"（normalize_hand，MCP9），非"手腕间距"，此为早期术语，现仅存于启发条目语境
 - **状态**：v2 保留（与 v1 "不做 Holistic"约束冲突）
 
 #### 20. Reduced BLEU — 手语翻译专用评估
@@ -262,7 +262,7 @@ espnet 的反驳——**伪矛盾**：
 存储层：np.full(shape, np.nan)   ← 保留"无检测"语义，用于审计
 加载层：np.nan_to_num(nan=0.0)   ← Dataset.__getitem__ 中转换，保证模型数值稳定
 ```
-两层各司其职。优于当前 `visibility<0.6 → 置零`（无法区分真实 (0,0) 和缺失）。
+两层各司其职。优于当前 `visibility<0.6 → 置零`（无法区分真实 (0,0) 和缺失）。<br>注：项目现用 `presence`（MediaPipe tasks API，CHANGELOG 2026-07-28 已记录 visibility→presence 迁移），此处为早期讨论时的术语。
 
 **B. 字符级 CTC 辅助任务**（slt 提出，基于 #21）
 不需要额外标注——把词标签按字拆分（如 "高考/加油" → "高/考/加/油"），共享编码器加一个字符 CTC 头。提供更细粒度的时间对齐信号。成本 ~20 行。

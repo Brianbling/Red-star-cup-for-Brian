@@ -9,7 +9,7 @@
    `python -c "import torch; import mediapipe; print('env ok')"`
 
 2. 确认 CE-CSL 数据路径存在：
-   `D:/red star project/CE-CSL/CE-CSL/video/train/`
+   `E:/CE-CSL/CE-CSL/video/train/`
 
 3. 确认摄像头可用（推理模式）：
    `python -c "import cv2; cap = cv2.VideoCapture(0); print(cap.isOpened())"`
@@ -24,9 +24,9 @@
 用户说"预处理"、"提取关键点"、"extract"时触发。
 
 **执行**：
-1. 检查是否已有 `.npy` 关键点文件（`D:/red star project/CE-CSL/CE-CSL/keypoints/`），已存在则跳过
+1. 检查是否已有 `.npy` 关键点文件（`E:/CE-CSL/CE-CSL/keypoints/`），已存在则跳过
 2. 对 train/dev/test 视频逐帧运行 MediaPipe Hands
-3. 每帧输出 42 维向量（左右手各21点 × 2坐标），缺失手部或低置信度点置零
+3. 每帧输出 84 维向量（左右手各21点 × 2坐标 = 42点 × 2 = 84维），缺失手部或低置信度点置零
 4. 每个视频保存为一个 `.npy`，文件名对应视频名
 5. 打印进度条和 ETA
 
@@ -38,8 +38,8 @@
 **执行**：
 1. 确认预处理数据已就绪，否则先跑模式 A
 2. 加载词汇表（从 CSV Gloss 列提取，按 `/` 分割去重）
-3. 构建 Dataset/DataLoader（读 .npy + 标签），batch_size=1，按序列长度排序
-4. 初始化模型：1D Conv(42→256) + BiLSTM(256→512, 2层) + Linear(512→词表+1 blank)
+3. 构建 Dataset/DataLoader（读 .npy + 标签），batch_size 默认 2（train.py 默认），按序列长度降序 padding
+4. 初始化模型：1D Conv(84→256, stride=2×2 级联, 总降采样 /4) + BiLSTM(256→512, 2层,双向) + Linear(512→词表)
 5. CTC Loss，Adam 优化器，初始 lr=0.001（比原 TFNet 更激进，因为模型小）
 6. 训练 50-100 epochs，每个 epoch 在 dev 集上验证
 7. 保存最佳 .pt 到 `D:/red star project/checkpoints/`
@@ -47,7 +47,7 @@
 **关键参数**：
 - hidden_size=512, num_layers=2, bidirectional=True
 - lr=0.001, weight_decay=1e-4
-- 早停 patience=10
+- 早停 patience=15（train.py 默认，另有 ReduceLROnPlateau patience=5）
 
 ### 模式 C：推理（实时 demo）
 用户说"启动"、"运行"、"demo"、"推理"、"测试"、"实时"时触发。
@@ -72,14 +72,13 @@
 
 | 用途 | 路径 |
 |------|------|
-| 数据集视频 | `D:/red star project/CE-CSL/CE-CSL/video/` |
-| 关键点缓存 | `D:/red star project/CE-CSL/CE-CSL/keypoints/` |
+| 数据集视频 | `E:/CE-CSL/CE-CSL/video/` |
+| 关键点缓存 | `E:/CE-CSL/CE-CSL/keypoints/` |
 | 模型权重 | `D:/red star project/checkpoints/` |
-| 配置 | `D:/red star project/config.yaml` |
 
 ## 注意事项
 
-- 训练时 batch_size 必须为 1（序列长度不一致）
+- 训练时 batch_size 默认 2（CLAUDE.md 明确不要尝试大 batch，分组 padding 实验已证明退步）
 - 预处理前先检查原视频路径，CE-CSL 下有双层嵌套目录
 - 推理时如果无 GPU，模型推理用 CPU 也可（模型很小）
 - YOLO 旁路如果卡顿，直接关掉，只保留主路

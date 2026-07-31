@@ -23,7 +23,7 @@
 
 ### Phase 2/3 — 模型 + 训练 + 解码 [代码完成，待训练]
 - **`src/build_vocab.py`**：从 CE-CSL CSV 构建词表 → `vocab.json`（3515 tokens）
-- **`src/model.py`**：1D Conv(84→256, stride=4) + BiLSTM(256→512, 2层,双向) + Linear(→vocab_size) + LogSoftmax + blank_bias=5.32，~14.0M 参数（3515 词表）
+- **`src/model.py`**：1D Conv(84→256, stride=2×2 级联, 总降采样 /4) + BiLSTM(256→512, 2层,双向) + Linear(→vocab_size) + LogSoftmax + blank_bias=5.32，~13.5M 参数（3515 词表，84d kp-only；660d raw visual 时 ~14.0M）
 - **`src/dataset.py`**：KeypointDataset 读取 .npy + CSV 标签，collate_fn time-major pad
 - **`src/train.py`**：CTC Loss + Adam + ReduceLROnPlateau + early stopping(patience=10) + WER 评估（复用 TFNet WER.py）
 - **`src/decode.py`**：CTC 贪心解码（argmax → unique_consecutive → 去 blank）
@@ -37,7 +37,7 @@
 ### 2026-07-28 (晚)
 - **Phase 1 进度**：train 1796/4972 (36.1%)，正常运行中
 - 清理无关进程：Anaconda Navigator (pythonw.exe x2)
-- **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 ~14.0M（非~5M）
+- **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 ~13.5M（非~5M）
 
 ## 2026-07-29
 
@@ -85,7 +85,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 1. **SR-CTC 的 KL 力不够**：smooth 后分布变化极小（KL≈0.01），不敌 CTC loss（~6.0）。论文中 SR-CTC 是辅助正则项，不是 blank 坍塌的银弹
 2. **bias init 是双刃剑**：压过头（-4.0）模型无法学到对齐，CTC 需要 blank 做分隔符
 3. **`zero_infinity=True` 是毒药**：inf batch 被丢弃后 loss 表面下降，实际没学到东西
-4. **BiLSTM + CTC 天然易 blank 坍塌**：BiLSTM 在长 T/L 比下尤易塌陷（T/L=68:1），通过 stride=4 + blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 联合解决
+4. **BiLSTM + CTC 天然易 blank 坍塌**：BiLSTM 在长 T/L 比下尤易塌陷（T/L=68:1），通过 1D Conv stride=2×2 级联（总 /4）+ blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 联合解决
 
 #### 尚待尝试
 
@@ -165,7 +165,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 
 #### 训练过程
 - Exp A 和 Exp B 均用 detached Python 进程运行（python -u ... > log 2>&1 &），避免被后台系统误杀
-- 均使用 blank penalty（threshold=0.65, weight=20.0）+ 熵正则（weight=0.01）+ stride=4 1D Conv
+- 均使用 blank penalty（threshold=0.55, weight=20.0）+ 熵正则（weight=0.01）+ 1D Conv stride=2×2 级联（总 /4）
 - Exp A 和 Exp B 均跑到 epoch 29 时被手动停止
 
 #### 最终结果
@@ -203,7 +203,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 | **Exp-2** | bs=4 + temporal augment | **75.69%** | 退步 9.1pp | 89 epochs |
 | **Exp-3** | beam search (beam=3) | 60.00%* | 持平* | 10 样本测试 |
 
-*Exp-3 仅测试 10 样本，greedy 和 beam 结果完全一致。
+*Exp-3 仅测试 10 样本，greedy 和 beam 结果完全一致。另有 `checkpoints/exp3_beam/` 一次从 best.pt 继续的 beam 验证训练（`--beam-width 3`），WER 84.44%→83.57% 无实质提升，同样支持"beam 无收益"结论。
 
 #### Exp-1：Grouped Padding (bs=4)
 
@@ -212,6 +212,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - S（替换）从 18% 波动到 18%，D（删除）从 41.8% 波动到 47-53%，collapse 10% 左右
 - 分组后 blank penalty 失效风险高，batch 小导致梯度噪声大
 - **结论**：分组 padding 对 CTC 训练无帮助，序列长度差异本身是有效的正则化
+- 注：`logs/exp1_bs4.log` 含两次训练（第一次 early stop e60 best=77.53%，第二次追加续跑 e66 best=68.83%）。`checkpoints/exp1_bs4/best.pt` 存的是第一次的 77.53%，68.83% 是第二次续跑的最优值（文档以 68.83% 计）
 
 #### Exp-2：时序增强 (temporal_scale + jitter + mask)
 
