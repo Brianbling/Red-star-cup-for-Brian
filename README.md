@@ -10,7 +10,7 @@
 摄像头 → MediaPipe 手部关键点 → 时序模型预测 → 中文词序列
 ```
 
-传统方案用 ResNet 逐帧提取特征（21M 参数，慢），本项目用 MediaPipe 提取手部 42 个关键点坐标来代替，模型轻量、支持实时推理。当前模型：1D Conv(stride=4) + 4 层 Conformer Encoder + CTC 解码。
+传统方案用 ResNet 逐帧提取特征（21M 参数，慢），本项目用 MediaPipe 提取手部 42 个关键点坐标来代替，模型轻量、支持实时推理。当前模型：1D Conv(stride=4) + BiLSTM(2层,双向,hidden=512) + CTC 解码。
 
 ## 项目结构速览
 
@@ -33,7 +33,7 @@
 ├── src/                         # 项目源代码（所有核心模块）
 │   ├── build_vocab.py           # 词表构建
 │   ├── preprocess_keypoints.py  # 预处理（视频→关键点）
-│   ├── model.py                 # 1D Conv(stride=4) + Conformer + Linear
+│   ├── model.py                 # 1D Conv(stride=4) + BiLSTM(2层,双向) + Linear
 │   ├── dataset.py               # KeypointDataset + collate_fn
 │   ├── train.py                 # 训练脚本（CTC + blank penalty + 熵正则）
 │   └── decode.py                # CTC 贪心解码
@@ -43,14 +43,14 @@
 └── requirements.txt             # Python 依赖
 ```
 
-## 当前进度（2026-07-30）
+## 当前进度（2026-07-31）
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | Phase 0 | 环境搭建 | 完成 |
 | Phase 1 | 关键点预处理 | 完成（5987 .npy） |
-| Phase 2 | 主路模型训练 | baseline WER 66.85%（Conformer+activity detection） |
-| Phase 3 | CTC 解码集成 | 代码完成，blank penalty + 熵正则已集成 |
+| Phase 2 | 主路模型训练 | 实验完成（WER 66.58%），~5K 数据是瓶颈 |
+| Phase 3 | CTC 解码集成 | 完成，贪心解码 + blank penalty + 熵正则 |
 | Phase 4 | 实时推理管线 | 待开始 |
 | Phase 5 | 旁路 YOLO 分类 | 待开始 |
 | Phase 6 | 系统联调测试 | 待开始 |
@@ -67,6 +67,16 @@
 | Projected fusion | 91.61% | 噪声获得不对等容量，更差 |
 
 **结论**：ImageNet 预训练特征编码的是物体类别，与手语无关。视觉融合路线暂搁置，v2 考虑 domain-specific 手部视觉 encoder。
+
+### 零成本优化实验（2026-07-31）
+
+| 实验 | WER | 结论 |
+|------|-----|------|
+| 分组 padding (bs=4) | 68.83% | 退步 2.3pp，batch 变小梯度噪声大 |
+| 时序增强 (bs=4) | 75.69% | 退步 9.1pp，坐标增强信噪比太差 |
+| Beam search (beam=3) | 持平 | 与贪心等价，P(blank)≈0.77 概率分布太尖锐 |
+
+**结论**：~5K 数据是 WER 瓶颈（66.58%），工程优化无法突破。需要更多数据或预训练。
 
 ## 环境
 

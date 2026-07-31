@@ -10,7 +10,7 @@
 摄像头 → 统一预处理 → MediaPipe Hands (42点关键点)
                       │
                       ├─ 主路: 置信度清洗 → 坐标归一化 → 滑动窗口(3s)
-                      │        → 1D Conv + BiLSTM → CTC解码 → 后处理去重 → 文本
+                      │        → 1D Conv(stride=4) + BiLSTM(2层,双向) → CTC解码 → 后处理去重 → 文本
                       │
                       └─ 旁路: YOLO 静态手势分类(每5帧) → 三重AND门控 → 静态词
                                ↑ 可关闭，低算力设备退化为纯时序识别
@@ -49,15 +49,18 @@ D:/red star project/
 │   │   ├── INSPIRATION.md    # 23 条灵感、优先级投票
 │   │   └── CHANGELOG.md      # 工作日志，持续追加
 │   └── temporary/            # 实验路线/诊断，过期后删除
-│       ├── 2026-07-29-ctc-blank-repair-plan.md  # CTC blank 坍塌修复实验路线
-│       └── 2026-07-29-ctc-blank-experiment-log.md  # 实验记录
+│       └── 实验方案.md       # 三阶段路线（孤立词预训练 → 数据扩展 → 视觉评估）
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
 │   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv(stride=2×2) + Conformer(4层) + Linear + LogSoftmax
+│   ├── model.py              # 1D Conv(stride=4) + BiLSTM(2层,双向=512) + Linear + LogSoftmax
 │   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
 │   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
-│   └── decode.py             # CTC 贪心解码 + 后处理
+│   ├── decode.py             # CTC 贪心解码 + 后处理
+│   ├── activity_detect.py    # 切掉手部丢失帧（训练时）
+│   ├── vocab_utils.py        # clean_word() 标签清洗（vocab 和 dataset 共享）
+│   ├── augmentation.py       # 时序增强（实验证明无效）
+│   ├── extract_visual_features.py  # MobileNetV3-Small 视觉特征提取
 ├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
 │   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
@@ -101,7 +104,7 @@ D:/red star project/
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
 - MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
-- `src/model.py` — 1D Conv + BiLSTM + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/model.py` — 1D Conv(stride=4) + BiLSTM(2层,双向,hidden=512) + Linear（独立实现，未复用 TFNet BiLSTM.py）
 - `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
 - `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
 - TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
@@ -118,14 +121,14 @@ D:/red star project/
 ## v1 约束
 
 **明确不做**：语言模型校正、beam search、MediaPipe Holistic、近形手势混淆处理。
-BiLSTM 双向 ~150ms 延迟可接受，不换单向。
+BiLSTM 双向 ~150-300ms 延迟可接受，不换单向。
 YOLO 旁路可关闭，低算力设备纯时序识别。
 
 ## 训练流程（离线）
 
 ```
 CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一个文件)
-→ Dataset/DataLoader → 1D Conv + BiLSTM + CTC Loss → best.pt
+→ Dataset/DataLoader → 1D Conv(stride=4) + BiLSTM(2层,双向) + CTC Loss → best.pt
 ```
 
 ## 推理流程（实时）
@@ -134,7 +137,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 1. `preprocess.py` — 预处理 + MediaPipe Hands + 置信度清洗 + 坐标归一化
 2. `window.py` — 滑动窗口（3s/90帧 deque）
 3. `arbitration.py` — 融合仲裁状态机
-4. `model.py` — 1D Conv + BiLSTM + Linear
+4. `model.py` — 1D Conv(stride=4) + BiLSTM(2层,双向) + Linear
 5. `decode.py` — CTC 贪心解码 + 后处理
 6. `inference.py` — 摄像头主循环，串起以上模块
 
@@ -143,7 +146,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 - 新代码放项目根目录，不混入 TFNet-main/
 - 路径用 `D:/red star project/...` 绝对路径或项目相对路径
 - 推理和训练代码分开
-- batch_size 固定为 1（序列长度不一致）
+- batch_size 默认 2（train.py），分组 padding (bs=4) 实验证明退步，不要尝试大 batch
 - 标签 Gloss 按 `/` 分割，空项过滤
 - **每完成一个 Phase/子任务，必须更新 `CHANGELOG.md`（工作日志）和 `CLAUDE.md`（如目录结构/环境版本变化）**，便于后续开发者追溯
 - **阅读外部项目/论文/代码库发现有价值的架构模式或工程技巧时，记录到 `.claude/INSPIRATION.md`**（启发日志），包含来源、核心思路、好处/代价、适用时机、讨论状态
@@ -177,9 +180,9 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
 | BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
 | 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
-| 模型架构 model.py | **自己写** | ~50 行 | 1D Conv + BiLSTM + Linear |
+| 模型架构 model.py | **自己写** | ~70 行 | 1D Conv(stride=4) + BiLSTM(2层,双向) + Linear + visual_fusion 模式 |
 | Dataset/DataLoader | **自己写** | ~90 行 | 读 .npy + 标签解析 + collate_fn |
-| 训练脚本 | **自己写** | ~180 行 | 独立实现，未复用 TFNet Train.py |
+| 训练脚本 | **自己写** | ~250 行 | 独立实现，未复用 TFNet Train.py |
 | CTC 贪心解码 | **自己写** | ~40 行 | argmax + unique_consecutive + 去 blank |
 | 滑动窗口 | **自己写** | ~30 行 | deque 封装 |
 | 融合仲裁状态机 | **自己写** | ~150 行 | 纯逻辑，分支多 |
@@ -194,7 +197,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 |-------|------|------|------|
 | 0 | 环境搭建（目录 + requirements + 验证） | 0.5h | CPU |
 | 1 | 关键点预处理（6000 视频 → .npy） | 4-6h | CPU，挂机 |
-| 2 | 主路模型训练（1D Conv + BiLSTM + CTC） | 12-24h | GPU，挂机 |
+| 2 | 主路模型训练（1D Conv(stride=4) + BiLSTM + CTC） | 12-24h | GPU，挂机 |
 | 3 | CTC 解码（贪心 + 后处理去重） | 1-2h | CPU |
 | 4 | 实时推理管线（6 个模块 + 联调） | 4-6h | CPU |
 | 5 | 旁路 YOLO 分类（数据准备 + 训练 + 集成） | 6-10h | GPU |
@@ -208,8 +211,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 |-------|------|------|
 | 0 | 环境搭建 | **已完成** (2026-07-28) |
 | 1 | 关键点预处理 | **已完成** (2026-07-28) |
-| 2 | 模型训练 | 实验进行中，关注 CHANGELOG.md |
-| 3 | CTC 解码 | 代码完成（src/decode.py） |
+| 2 | 模型训练 | 实验完成 (2026-07-31), WER=66.58%, ~5K 数据是瓶颈 |
+| 3 | CTC 解码 | 已完成（src/decode.py，贪心解码 + blank penalty + 熵正则） |
 | 4 | 实时推理管线 | 待开始 |
 | 5 | 旁路 YOLO | 待开始 |
 | 6 | 联调测试 | 待开始 |
@@ -249,7 +252,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | TFNet 复用 | "TFNet BiLSTM.py/Train.py/DataProcessMoudle.py 被复用" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
 | MediaPipe API | "用 `mp.solutions.hands`" | 已迁移到 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
 | 词表大小 | "~500-1000 词" | 3515 tokens（vocab.json） |
-| 模型参数 | "~5M" | 13.1M |
+| 模型参数 | "~5M" | ~14.0M（3515 词表）, ~10.8M（478 词表） |
 | 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/` |
 | 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
 | 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
@@ -261,7 +264,11 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Visual Features | "MobileNetV3-Small 576d 特征能提升手语识别" | ImageNet 预训练特征编码物体类别（猫、车），与手语无关。Raw concat WER 84.79%（collapse=0%），比 kp-only 66.58% 差 18pp。Projected fusion 更差（91.61%），因噪声获得了不对等建模容量。collapse 消除但 token 预测错误取代了它 |
 | clean_word 一致性 | "build_vocab 和 dataset 用同一套清洗逻辑，标签一定对得上" | `build_vocab.py` 调 `clean_word()` 去括号再存词表，`dataset.py` 只 `w.strip()` 就查 word2idx → KeyError → 静默跳过。含括号 token 在训练中丢失。已修复（`vocab_utils.clean_word`），但重训后 WER 不变（66.85%→66.58%），标签完整性不是当前瓶颈 |
 | WER.py D/I 交换 | "WerList 返回的 del_rate/ins_rate 是准确的" | 编辑距离初始化和 backtrace 中 D/I 标签交叉绑定。总 WER 不受影响（代价均为 1），但 `del_rate` 和 `ins_rate` **互换**。已修复：S/D/I 均用正确语义 |
-| 零成本优化 | "分组 padding/增强/beam search 能降 WER 12-17pp" | 三项均未达预期。Grouped bs=4 WER 68.83%（退步 2.3pp）；augment WER 75.69%（退步 9.1pp）；beam=3 WER 与 greedy 完全一致。5K 数据量下，工程优化无法突破 WER 平台。需要更多数据或预训练模型 |
+| Grouped Padding | "分组 padding(bs=4) 减少填充量，能提升 WER" | WER 退步 2.3pp（66.58%→68.83%）。batch 变小导致梯度噪声大，序列长度差异本身是有效正则化。不要尝试改 bs |
+| Temporal Augmentation | "坐标增强 + jitter 能提升泛化" | WER 退步 9.1pp（66.58%→75.69%）。84d 低维特征空间下，坐标级增强噪声大于信号。~5K 数据不够，增强放大方差 |
+| Beam Search (CTC Prefix) | "beam search 比贪心好 5-8pp" | WER 0pp 变化。模型 P(blank)≈0.77，概率分布过于尖锐，无备选路径可探索。beam search 只在模型足够"犹豫"时有价值 |
+| blank_bias=5.32 | "初始化给 blank 正 bias 不合理" | 不给正 bias（bias=0）时 P(blank) 从 0→1.0 仅需 1 epoch。bias=5.32 是正确初始化，不是 hack。CTC 需要 blank 做分隔符，bias 控制初始 P(blank) ≈ σ(5.32)≈0.995 |
+| 数据瓶颈 | "改进训练/解码策略就能突破 WER" | 三项零成本优化均退步或不改善。~5K 数据量是 WER 天花板（66.58%），突破需要更多数据或预训练，非工程优化 |
 
 ### 4. 编辑约束
 
