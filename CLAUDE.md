@@ -82,7 +82,7 @@ D:/red star project/
 ├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续（含 keypoints/ 缓存）
 ├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化），1098 .npy + index.json（87 token / 94 匹配视频），gitignore 不跟踪
 ├── YOLOv8/                   # YOLOv8，含 l1290_data.yaml + train_l1290.py；L1290 权重在 runs/l1290/weights/best.pt
-├── ASL Alphabet/             # 美式手语字母数据集
+├── ASL Alphabet/             # 美式手语字母数据集（尚未下载，需使用时再获取）
 ├── L1290/                    # C382 手势手语数据（35 类，2148 训练图，YOLO 检测格式）
 ├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（未编译）
 ├── models/                   # 模型文件
@@ -128,7 +128,7 @@ D:/red star project/
 - CSL_common_dataset（863 个中国手语常用词视频，文件名即标签）
 - 注意：两个数据集均无 CSV 标签文件，无 train/test 划分，需自行 8:2 划分
 - 注意：视频为词级（非帧级标注），YOLO 分类训练时从视频抽帧，同视频所有帧共享文件名词类
-- ASL Alphabet 数据集（字母手势，可作预训练补充）
+- ASL Alphabet 数据集（字母手势，可作预训练补充；尚未下载，目录不存在）
 - **L1290 静态手势分类已训练完成**：yolov8s + COCO 预训练，100 epochs，最优 mAP50=0.985（epoch 18）、mAP50-95=0.805（epoch 55），权重 `YOLOv8/runs/l1290/weights/best.pt`。**坑**：`YOLO("yolov8s.yaml").train(pretrained=True)` 不会真正加载预训练权重，必须传 `.pt` 文件（详见 CHANGELOG 2026-08-01）
 - 旁路尚未集成到实时推理管线（Phase 5 集成部分待做，YOLO 分类模型本身已就绪）
 
