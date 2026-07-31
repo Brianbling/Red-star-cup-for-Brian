@@ -271,3 +271,27 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **对比（弃用）**：首轮误用 yaml+pretrained=True 从随机初始化训了 7 epoch（box 1.43/cls 2.09/dfl 2.14，无 val），停掉改用正确预训练加载。随机初始化在小数据（2148 图）上收敛慢且 mAP 明显更差，COCO 预训练是关键
 - **输出**：`YOLOv8/runs/l1290/`（results.csv、weights/best.pt、last.pt），随机初始化痕迹在 `runs/l1290_random_init/`（可删）
 - **预计完成**：100 epochs × ~2min ≈ 3.5h（已跑 ~15min）
+
+### 2026-07-31 — Agent D 归一化对照实验【完成】
+
+#### 关键发现：数据本已归一化（任务前提错误）
+- 全量 **1,247,783 个有效手帧**（train 1,049,611 + dev 95,249 + test 102,923）检查：**所有帧 wrist=[0,0]、wrist→MCP9 距离恒为 1.0**（0 例外）
+- 66.58% baseline **本来就在已归一化数据上训练**。归一化在 Phase 1 后原地做掉（train_scales.json 记录归一化前尺度，.npy 文件时间戳晚于 scales）
+- "归一化未实现"的 Landmine 是**文档幻觉**：E: 数据已归一化，但 main 分支 `src/preprocess_keypoints.py` 仍是原始坐标版（归一化代码在 `worktree-fix-preprocess-normalization` 分支）
+
+#### 交付代码（已合入）
+- `src/preprocess_keypoints.py`：新增 `normalize_hand()`（wrist 原点 + 除 MCP9 距离，epsilon=0.1 防除零）
+- `src/normalize_existing.py`：离线复归一化（8 进程，5987 文件 ~10s）
+- `src/train.py` + `src/dataset.py`：`--keypoint-subdir` / `--keypoint-dir` / `--epochs` 参数
+
+#### 15-epoch 对照实验（两个 Agent D 实例交叉验证）
+| Epoch | D1 | D2 |
+|-------|----|----|
+| 5 | 96.52% | 94.42% |
+| 10 | 89.36% | 90.17% |
+| 15 | 85.36% | 84.90% |
+| best | 85.36% (e15) | 83.88% (e12) |
+
+- 两实例结果**交叉一致**（±1.5pp），训练轨迹 = baseline 冷启动复跑（blank 坍塌→恢复，仍在下降）
+- **结论**：归一化是 baseline 已有状态，**不是 WER 瓶颈**。对已归一化数据再归一化不可能改变 WER。真实 raw-vs-normalized 对比无法做（原始坐标已不存在）
+- 与既有结论一致：**瓶颈是数据量（~5K）**，下一步数据扩展（孤立词 94 已交付 + CSL-Daily 20K）

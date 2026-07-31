@@ -7,6 +7,7 @@ API: MediaPipe 0.10.35 (tasks API, HandLandmarker, IMAGE mode)
   左手 21 点 (x,y) + 右手 21 点 (x,y) = 42 点 × 2 = 84 维
   presence < 0.6 的坐标置零
   手部完全丢失时填全零
+  手腕归一化: 每只手独立 (point - wrist) / ||middle_mcp - wrist||_2
 
 用法:
   python preprocess_keypoints.py --split train --max_videos 10   # 小批量验证
@@ -42,6 +43,31 @@ MODEL_PATH = BASE_DIR / "models/hand_landmarker.task"
 
 PRESENCE_THRESHOLD = 0.6
 LETTER_DIRS = list("ABCDEFGHIJKL")
+WRIST_IDX = 0
+MIDDLE_MCP_IDX = 9
+HAND_SCALE_FALLBACK = 0.1
+
+
+def normalize_hand(kp_hand):
+    """Wrist-centering + hand-scale normalization for one hand (21 points, 42 values).
+
+    (point - wrist) / ||middle_mcp - wrist||_2. If wrist is zero (hand absent
+    or wrist not detected) return unchanged. If middle_mcp is zero (scale
+    undefined) fall back to HAND_SCALE_FALLBACK to avoid div-by-zero.
+    """
+    wrist = kp_hand[WRIST_IDX * 2: WRIST_IDX * 2 + 2]
+    middle_mcp = kp_hand[MIDDLE_MCP_IDX * 2: MIDDLE_MCP_IDX * 2 + 2]
+    if (wrist == 0).all():
+        return kp_hand
+    hand_scale = np.linalg.norm(middle_mcp - wrist)
+    if hand_scale < 1e-6:
+        hand_scale = HAND_SCALE_FALLBACK
+    normalized = np.zeros_like(kp_hand)
+    for j in range(21):
+        px, py = kp_hand[j * 2], kp_hand[j * 2 + 1]
+        normalized[j * 2] = (px - wrist[0]) / hand_scale
+        normalized[j * 2 + 1] = (py - wrist[1]) / hand_scale
+    return normalized
 
 
 def create_landmarker():
@@ -68,22 +94,24 @@ def extract_keypoints(landmarker, frame_bgr):
     mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
     result = landmarker.detect(mp_image)
 
-    keypoints = np.zeros(84, dtype=np.float32)
+    left_kp = np.zeros(42, dtype=np.float32)
+    right_kp = np.zeros(42, dtype=np.float32)
 
     if not result.hand_landmarks:
-        return keypoints
+        return np.concatenate([left_kp, right_kp])
 
     for i, landmarks in enumerate(result.hand_landmarks):
         handedness = result.handedness[i][0].category_name
-        offset = 0 if handedness == "Left" else 42
-
+        target = left_kp if handedness == "Left" else right_kp
         for j, lm in enumerate(landmarks):
             presence = lm.presence if lm.presence is not None else 1.0
             if presence > PRESENCE_THRESHOLD:
-                keypoints[offset + j * 2] = lm.x
-                keypoints[offset + j * 2 + 1] = lm.y
+                target[j * 2] = lm.x
+                target[j * 2 + 1] = lm.y
 
-    return keypoints
+    left_kp = normalize_hand(left_kp)
+    right_kp = normalize_hand(right_kp)
+    return np.concatenate([left_kp, right_kp])
 
 
 def process_video(landmarker, video_path, save_path):
