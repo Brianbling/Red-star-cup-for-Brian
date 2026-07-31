@@ -247,3 +247,17 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **修改** `src/decode.py` — `ctc_prefix_beam_search`
 - **修改** `src/train.py` — `--group-size`/`--augment`/`--beam-width` 参数
 - 当前最优路线：全量 kp-only + activity detection（WER 66.85%），继续分析 token 级错误分布
+
+### 2026-07-31 — 数据扩展双线并行（isolated words + L1290 YOLO）
+
+#### 孤立词时序数据（agent: ac4ff5f）
+- **新增 3 文件**：`src/extract_isolated_words.py`（MediaPipe IMAGE 模式 + normalize_hand 手腕归一化，输出 (T,84) float32）、`src/build_isolated_index.py`（clean_word(filename) 匹配 vocab_top478 word2idx）、`src/isolated_dataset.py`（IsolatedKeypointDataset + CombinedDataset 可混入 CE-CSL train）
+- **归一化对齐**：E:/CE-CSL 主数据是手腕归一化（middle_mcp norm==1.0 已验证），孤立词复用同一公式，保证特征分布一致
+- **中文路径**：cv2.VideoCapture 实测可直开真实中文文件名，仍内置 copy2→ASCII 临时目录回退防御
+- **进度**：basic 65/235 + common 10/863 提取中（~0.3 视频/s，全量 ~1h）。全量预计覆盖 vocab_top478 的 94 词（basic 48 + common 46）≈ 20%
+- **验证**：CombinedDataset(CE-CSL 4910 + 孤立词) DataLoader + collate_fn + SLRModel forward + CTC loss 全部通过
+
+#### L1290 YOLO 静态手势分类（agent: ab5817c，新启动）
+- **数据**：train 2148 + val 210 张 JPEG（640x480），35 个手势类（GBK 中文类名，0=时间/时候、24=谢谢、28=我、29=爱、34=介绍 等），YOLO 检测格式 `class cx cy w h`
+- **任务**：l1290_data.yaml + train_l1290.py（yolov8s + pretrained）→ 训练 → 验证 mAP
+- **状态**：启动中，验证数据完整性

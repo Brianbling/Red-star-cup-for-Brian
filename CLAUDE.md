@@ -61,6 +61,9 @@ D:/red star project/
 │   ├── vocab_utils.py        # clean_word() 标签清洗（vocab 和 dataset 共享）
 │   ├── augmentation.py       # 时序增强（实验证明无效）
 │   ├── extract_visual_features.py  # MobileNetV3-Small 视觉特征提取
+│   ├── extract_isolated_words.py   # 孤立词关键点提取（手腕归一化）
+│   ├── build_isolated_index.py     # 孤立词→vocab 匹配索引
+│   └── isolated_dataset.py         # 孤立词数据集 + CombinedDataset
 ├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
 │   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
@@ -69,9 +72,10 @@ D:/red star project/
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
 ├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续
+├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化）
 ├── YOLOv8/                   # YOLOv8，已有 MNIST demo，待改造为静态手势分类
 ├── ASL Alphabet/             # 美式手语字母数据集
-├── L1290/                    # C382 手势手语数据
+├── L1290/                    # C382 手势手语数据（35 类，2148 训练图，YOLO 检测格式）
 ├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（未编译）
 ├── models/                   # 模型文件
 │   └── hand_landmarker.task  # MediaPipe Hand Landmarker (~7.6MB)
