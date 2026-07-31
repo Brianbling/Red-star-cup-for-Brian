@@ -32,6 +32,7 @@
 | `docs/temporary/` | 临时 | 当前活跃的实验路线/诊断 | 按需读取 |
 
 **规则**：新增临时文档 → 索引加一行。临时文档过期 → 删除文件 + 从索引移除。
+**现状**：`docs/temporary/实验方案.md`（三阶段路线：SLR 25K 孤立词预训练 → CSL-Daily 20K 数据扩展 → 视觉评估）存在于主仓库但 **git 未跟踪**（仅 `.gitkeep` 入库）。该文件仍是当前最权威的数据扩展路线图，但如需在 worktree 中修改请先 `git add` 或直接在 main 仓库改。
 
 ## 目录结构
 
@@ -52,18 +53,25 @@ D:/red star project/
 │       └── 实验方案.md       # 三阶段路线（孤立词预训练 → 数据扩展 → 视觉评估）
 ├── src/                      # 项目源代码
 │   ├── build_vocab.py        # 词表构建
-│   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy
-│   ├── model.py              # 1D Conv(stride=4) + BiLSTM(2层,双向=512) + Linear + LogSoftmax
+│   ├── preprocess_keypoints.py # Phase 1: 视频 → 关键点 .npy（含 normalize_hand 手腕归一化）
+│   ├── model.py              # 1D Conv(stride=2×2) + BiLSTM(2层,双向=512) + Linear + LogSoftmax + visual_fusion
 │   ├── dataset.py            # KeypointDataset + collate_fn(time-major pad)
-│   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本
-│   ├── decode.py             # CTC 贪心解码 + 后处理
+│   ├── train.py              # CTC Loss + blank penalty + 熵正则训练脚本（含 --visual-fusion/--group-size/--augment/--beam-width）
+│   ├── decode.py             # CTC 贪心解码 + 后处理（含 ctc_prefix_beam_search）
 │   ├── activity_detect.py    # 切掉手部丢失帧（训练时）
 │   ├── vocab_utils.py        # clean_word() 标签清洗（vocab 和 dataset 共享）
 │   ├── augmentation.py       # 时序增强（实验证明无效）
-│   ├── extract_visual_features.py  # MobileNetV3-Small 视觉特征提取
+│   ├── normalize_existing.py # 离线复归一化已有 .npy（8 进程，5987 文件 ~10s）
+│   ├── beam_quick_test.py    # beam search 快速验证（10 样本）
+│   ├── validate_beam.py      # beam search 全量验证脚本
+│   ├── extract_visual_features.py  # MobileNetV3-Small 视觉特征提取（已否决）
 │   ├── extract_isolated_words.py   # 孤立词关键点提取（手腕归一化）
 │   ├── build_isolated_index.py     # 孤立词→vocab 匹配索引
-│   └── isolated_dataset.py         # 孤立词数据集 + CombinedDataset
+│   ├── isolated_dataset.py         # 孤立词数据集 + CombinedDataset
+│   ├── visual_backbone.py    # 视觉 backbone（MobileNetV3 封装，实验用）
+│   ├── video_dataset.py      # 视频数据集（视觉实验用）
+│   ├── model_visual.py       # 视觉融合模型（实验用）
+│   └── train_visual.py       # 视觉实验训练脚本（实验用）
 ├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
 ├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
 │   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
@@ -71,17 +79,18 @@ D:/red star project/
 │   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)，5987 文件
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
-├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续
-├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化）
-├── YOLOv8/                   # YOLOv8，已有 MNIST demo，待改造为静态手势分类
+├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续（含 keypoints/ 缓存）
+├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化），1098 .npy + index.json（87 token / 94 匹配视频），gitignore 不跟踪
+├── YOLOv8/                   # YOLOv8，含 l1290_data.yaml + train_l1290.py；L1290 权重在 runs/l1290/weights/best.pt
 ├── ASL Alphabet/             # 美式手语字母数据集
 ├── L1290/                    # C382 手势手语数据（35 类，2148 训练图，YOLO 检测格式）
 ├── ctc_decoders-master/      # CTC beam search + 贪心解码 C++ 库（未编译）
 ├── models/                   # 模型文件
 │   └── hand_landmarker.task  # MediaPipe Hand Landmarker (~7.6MB)
 ├── checkpoints/              # 模型权重保存目录
-│   ├── best.pt               # 当前最佳 WER 权重
-│   └── last.pt               # 最近 epoch 权重
+│   ├── best.pt               # 当前最佳 WER 权重（66.58%）
+│   ├── last.pt               # 最近 epoch 权重
+│   └── exp_*/                # 各实验独立 checkpoint（kp_only/exp1_bs4/exp2_augment/exp3_beam 等）
 ├── reference/                # 代码参考项目（只读，不修改）
 │   ├── wenet-main/           # 流式 ASR 生产框架
 │   ├── espnet-master/        # 流式 ASR 研究框架
@@ -108,25 +117,27 @@ D:/red star project/
 ### 主路（实时识别）— 齐全
 - CE-CSL 数据集（6000 条视频 + CSV 标签，train-01418 缺视频需处理）
 - MediaPipe Hands（pip 已装，IMAGE 模式，~63ms/帧）
-- `src/model.py` — 1D Conv(stride=4) + BiLSTM(2层,双向,hidden=512) + Linear（独立实现，未复用 TFNet BiLSTM.py）
+- `src/model.py` — 1D Conv（两个 stride=2，总降采样 /4，84→256）+ BiLSTM(2层,双向,hidden=512) + Linear（独立实现，未复用 TFNet BiLSTM.py）
 - `src/train.py` — CTC Loss 训练脚本（独立实现，未复用 TFNet Train.py）
 - `src/dataset.py` — KeypointDataset + collate_fn（读 .npy，非原始视频帧，未复用 TFNet DataProcessMoudle.py）
 - TFNet `WER.py` — 词错误率评估（唯一复用的 TFNet 模块）
 - ctc_decoders（C++ CTC 解码，含贪心和 beam，有 SWIG Python 绑定，未使用）
 
-### 旁路（静态手势）— 数据齐全
+### 旁路（静态手势）— 数据齐全 + 权重已训
 - CSL_basic_dataset（235 个中国手语单词视频，文件名即标签）
 - CSL_common_dataset（863 个中国手语常用词视频，文件名即标签）
 - 注意：两个数据集均无 CSV 标签文件，无 train/test 划分，需自行 8:2 划分
 - 注意：视频为词级（非帧级标注），YOLO 分类训练时从视频抽帧，同视频所有帧共享文件名词类
 - ASL Alphabet 数据集（字母手势，可作预训练补充）
-- YOLOv8（已有 MNIST 训练链路，可直接改造为静态手势分类）
+- **L1290 静态手势分类已训练完成**：yolov8s + COCO 预训练，100 epochs，最优 mAP50=0.985（epoch 18）、mAP50-95=0.805（epoch 55），权重 `YOLOv8/runs/l1290/weights/best.pt`。**坑**：`YOLO("yolov8s.yaml").train(pretrained=True)` 不会真正加载预训练权重，必须传 `.pt` 文件（详见 CHANGELOG 2026-08-01）
+- 旁路尚未集成到实时推理管线（Phase 5 集成部分待做，YOLO 分类模型本身已就绪）
 
 ## v1 约束
 
 **明确不做**：语言模型校正、beam search、MediaPipe Holistic、近形手势混淆处理。
 BiLSTM 双向 ~150-300ms 延迟可接受，不换单向。
 YOLO 旁路可关闭，低算力设备纯时序识别。
+beam search 已实测与贪心等价（WER 0pp 变化，P(blank)≈0.77 概率分布太尖锐），不再尝试。
 
 ## 训练流程（离线）
 
@@ -214,18 +225,19 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | 0 | 环境搭建 | **已完成** (2026-07-28) |
-| 1 | 关键点预处理 | **已完成** (2026-07-28) |
-| 2 | 模型训练 | 实验完成 (2026-07-31), WER=66.58%, ~5K 数据是瓶颈 |
-| 3 | CTC 解码 | 已完成（src/decode.py，贪心解码 + blank penalty + 熵正则） |
+| 1 | 关键点预处理 | **已完成** (2026-07-28，5987 .npy，含归一化) |
+| 2 | 模型训练 | **实验全部完成** (2026-08-01)，WER=66.58%，~5K 数据是唯一瓶颈 |
+| 3 | CTC 解码 | 已完成（src/decode.py，贪心解码 + blank penalty + 熵正则；beam search 验证与贪心等价） |
 | 4 | 实时推理管线 | 待开始 |
-| 5 | 旁路 YOLO | 待开始 |
+| 5 | 旁路 YOLO | **分类模型已训好**（L1290 mAP50=0.985），集成到推理管线待做 |
 | 6 | 联调测试 | 待开始 |
 
-**Phase 2 实验结论**：
+**Phase 2 实验结论（2026-07-28 → 2026-08-01）**：
 - 当前最优：全量 kp-only + activity detection，top-478 子词表，best WER **66.58%**（Epoch 52，D=41.8% S=21.3% I=3.5%）
-- **WER 瓶颈 = 数据量（~5K 样本）**，不是模型架构（BiLSTM 13.5M）、特征维度（84d）、解码策略（贪心）或标签完整性
-- 已排除的假设（详见 CHANGELOG + Landmines）：blank 坍塌、视觉特征融合、activity detection、clean_word 标签 bug、分组 padding、时序增强、beam search
-- 下一步（`docs/temporary/实验方案.md`）：SLR 25K 孤立词预训练 + CSL-Daily 20K 数据扩展
+- **WER 瓶颈 = 数据量（~5K 样本）**，不是模型架构（BiLSTM 13.5M）、特征维度（84d）、解码策略（贪心）、归一化或标签完整性
+- 已排除的假设（详见 CHANGELOG + Landmines）：blank 坍塌、视觉特征融合、activity detection、clean_word 标签 bug、分组 padding、时序增强、beam search、归一化缺失
+- 已交付的数据扩展：孤立词 1098 .npy + index.json（94 匹配视频，CombinedDataset 已实现可混入 CE-CSL train）；L1290 YOLO 旁路权重（mAP50=0.985）
+- 下一步（`docs/temporary/实验方案.md`，主仓库未跟踪）：SLR 25K 孤立词预训练 + CSL-Daily 20K 数据扩展
 
 ## 工作流治理（防幻觉与决策一致性）
 
@@ -265,7 +277,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 模型参数 | "~5M" | 13.5M（vocab=3515，BiLSTM 2 层 512d）；子词表 vocab=479 时 10.4M（实测 13,515,451 / 10,403,551） |
 | 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/`（数据已迁移至 E:/CE-CSL/CE-CSL） |
 | 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
-| 归一化已实现 | "归一化代码已在 main 分支" | E: 训练数据已归一化（手腕原点 + 腕→中指根缩放，实测有负值/超 [0,1] 坐标），但 **main 分支 `src/preprocess_keypoints.py` 仍是原始坐标版本**。归一化代码在 `worktree-fix-preprocess-normalization` 分支（提交 6c1a17c/37d90df）。若重新跑预处理需先合并该分支 |
+| 归一化已实现 | "main 分支 `src/preprocess_keypoints.py` 仍是原始坐标版本" | E: 训练数据早已归一化（wrist 原点 + 腕→中指根缩放，1,247,783 帧 0 例外），归一化不是瓶颈。`src/preprocess_keypoints.py` 已合入 `normalize_hand()`（2026-08-01）。66.58% baseline 本就在已归一化数据上训练 |
 | ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
 | CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。长序列下 T/L 平均 ~34:1（实测 dev 数据，极端样本 50:1+），blank 是 CTC 最便宜路径 |
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
@@ -279,6 +291,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Beam Search (CTC Prefix) | "beam search 比贪心好 5-8pp" | WER 0pp 变化。模型 P(blank)≈0.77，概率分布过于尖锐，无备选路径可探索。beam search 只在模型足够"犹豫"时有价值 |
 | blank_bias=5.32 | "初始化给 blank 正 bias 不合理" | 不给正 bias（bias=0）时 P(blank) 从 0→1.0 仅需 1 epoch。bias=5.32 是正确初始化，不是 hack。CTC 需要 blank 做分隔符，bias 控制初始 P(blank) ≈ σ(5.32)≈0.995 |
 | 数据瓶颈 | "改进训练/解码策略就能突破 WER" | 三项零成本优化均退步或不改善。~5K 数据量是 WER 天花板（66.58%），突破需要更多数据或预训练，非工程优化 |
+| L1290 YOLO 是时序模型 | "L1290 是手势时序分类，与主路同思路" | L1290 是 **YOLO 静态手势检测/分类**（35 类，2148 图），训练产物是旁路静态词权重 `YOLOv8/runs/l1290/weights/best.pt`（mAP50=0.985），与主路 BiLSTM+CTC 完全独立 |
+| YOLO 预训练加载 | "`YOLO('yolov8s.yaml').train(pretrained=True)` 会加载 COCO 权重" | **不会**。yaml 构建的模型无 ckpt，bool pretrained 不触发 load_checkpoint（log 无 "Transferred" 行）。必须 `YOLO("yolov8s.pt")`。GitHub 下载 SSL 失败需 `ssl.CERT_NONE` + urllib 手动下载 |
 
 ### 4. 编辑约束
 

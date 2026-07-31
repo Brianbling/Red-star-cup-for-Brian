@@ -32,7 +32,8 @@
              ▼                        │
     ┌─────────────────┐               │
     │  坐标归一化       │               │
-    │  以手腕间距为分母  │               │
+    │  每只手独立:      │               │
+    │  (点-手腕)/腕→中指根距 │            │
     └────────┬────────┘               │
              │                        │
              ▼                        │
@@ -108,8 +109,8 @@
 - 仅使用 MediaPipe Hands（非 Holistic），省掉全身 33 点计算
 - 输出：左手 21 点 + 右手 21 点，每点 (x, y, visibility)
 - 缺点级处理：
-  - **置信度清洗**：`visibility < 0.6` 的关键点坐标置零
-  - **坐标归一化**：以双手腕间距（或单手腕到手肘距离）为分母，消除远近拍摄影响
+  - **置信度清洗**：`presence < 0.6` 的关键点坐标置零
+  - **坐标归一化**：每只手独立，`(点 - 手腕) / ‖中指根 - 手腕‖₂`（`src/preprocess_keypoints.py` 的 `normalize_hand()`，epsilon=0.1 防除零），消除远近拍摄影响。E: 全部 1,247,783 帧已验证 wrist=[0,0]、腕→中指根距离=1.0
   - **手部丢失处理**：连续 M 帧手部置信度均 < 阈值 → 清空滑动窗口 + 重置 CTC 隐状态
 
 ### 2. 滑动窗口
@@ -117,9 +118,11 @@
 - 超出窗口的旧帧自动出队，防止内存无限增长
 - 每次送入时序模型的是窗口内的完整序列
 
-### 3. 静态手势分流 — YOLOv8n
-- 轻量分类模型，单帧判断静态手势类别（字母、数字、简单词）
+### 3. 静态手势分流 — YOLO
+- 轻量检测/分类模型，单帧判断静态手势类别（字母、数字、简单词）
 - 运行频率：**每 5 帧跑 1 次**（约 167ms 间隔），不每帧跑
+- **分类模型已就绪**：L1290 数据集（35 类，2148 训练图）用 yolov8s + COCO 预训练，100 epochs，最优 **mAP50=0.985**（epoch 18）、mAP50-95=0.805（epoch 55），权重 `YOLOv8/runs/l1290/weights/best.pt`。注意 ultralytics 8.4.105 下必须传 `.pt` 文件才会真正加载预训练权重
+- **集成待做**：把 L1290 权重接入推理管线（每 5 帧跑一次检测 + 类别判断 + 三重 AND 门控）
 - 低算力设备可完全关闭此模块，退化为纯时序识别
 
 ### 4. 融合仲裁层
@@ -152,7 +155,7 @@ else:
 | 手部丢失清缓存帧数 M | 30 帧 (~1s) | 连续丢失才清 |
 
 ### 5. 时序模型
-- **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维，stride=4 降采样（T→T/4）
+- **1D Conv 编码层**：84 维输入 → 两个 Conv1d(kernel=3, stride=2) 级联（总降采样 /4），升维到 256 维（T→T/4）+ LayerNorm
 - **BiLSTM**：2 层双向 LSTM（hidden_size=512），13.5M 参数（3515 词表）/ 10.4M（vocab=479 词表，实测 13,515,451 / 10,403,551）
 - **Linear + LogSoftmax**：输出到词表大小的 log 概率
 - **blank_bias 初始化**：FC 层 blank token 的 bias 初始化为 +5.32，使 P(blank) ~ 0.995。不给正 bias 时 P(blank) 会在 1 epoch 内从 0 → 1.0，导致 blank 坍塌。这是训练稳定性必需的设计，非 hack
@@ -189,13 +192,19 @@ else:
 ```
 CE-CSL 视频
   → MediaPipe Hands 逐帧提取关键点
+  → normalize_hand 手腕归一化
   → 保存 .npy (每个视频一个文件)
+  → activity_detect 切手部丢失帧
   → 标签按 / 分割为词序列
-  → 训练 1D Conv(stride=4) + BiLSTM(2层,双向) + CTC
+  → 训练 1D Conv(/4 降采样) + BiLSTM(2层,双向) + CTC
   → 导出 .pt 权重
 ```
 
 训练代码为独立实现（`src/train.py`、`src/dataset.py`、`src/model.py`），未复用 TFNet 训练框架。
+
+**数据扩展路径（已交付）**：
+- 孤立词：`src/extract_isolated_words.py`（MediaPipe + normalize_hand → (T,84) .npy）+ `src/build_isolated_index.py`（clean_word 匹配 top-478 词表）+ `src/isolated_dataset.py`（IsolatedKeypointDataset + CombinedDataset 混入 CE-CSL train）。产物：`isolated_words/` 1098 .npy + index.json（87 token / 94 匹配视频）
+- 后续：SLR_Dataset 25K 孤立词预训练 + CSL-Daily 20K 数据扩展（详见 `docs/temporary/实验方案.md`）
 
 ---
 
