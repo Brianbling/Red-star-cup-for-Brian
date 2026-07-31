@@ -52,13 +52,13 @@ python -c "import torch, mediapipe, cv2, numpy; print('ok')"
 ### 产出文件
 ```
 CE-CSL/CE-CSL/keypoints/train/<video_id>.npy   # shape: (T, 84) 即 42点×2坐标
-CE-CSL/CE-CSL/keypoints/dev/<video_id>.npy     # visibility<0.6 的关键点已置零
+CE-CSL/CE-CSL/keypoints/dev/<video_id>.npy     # presence<0.6 的关键点已置零
 CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 ```
 
 ### 关键实现细节
 - 每帧提取左右手各 21 点 (x,y)，即 84 维向量
-- visibility < 0.6 的坐标置零（置信度清洗）
+- presence < 0.6 的坐标置零（置信度清洗）
 - 手部完全丢失时填全零（不丢帧，保持帧序号对齐）
 - 已处理的视频跳过（支持断点续跑）
 - 每个视频跑完立即存盘，不内存积压
@@ -189,8 +189,8 @@ def ctc_greedy_decode(logits):
   1. resize 256×256, BGR→RGB
   2. MediaPipe Hands 推理
   3. 提取左右手 42 点 (x,y)
-  4. visibility < 0.6 → 置零
-  5. 以手腕间距做坐标归一化
+  4. presence < 0.6 → 置零
+  5. 以手腕为原点、腕→中指根距离为尺度做坐标归一化
 ```
 
 #### `window.py` — 滑动窗口

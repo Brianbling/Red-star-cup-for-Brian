@@ -10,7 +10,7 @@
 摄像头 → 统一预处理 → MediaPipe Hands (42点关键点)
                       │
                       ├─ 主路: 置信度清洗 → 坐标归一化 → 滑动窗口(3s)
-                      │        → 1D Conv(stride=4) + BiLSTM(2层,双向) → CTC解码 → 后处理去重 → 文本
+                      │        → 1D Conv(stride=2×2) + BiLSTM(2层,双向) → CTC解码 → 后处理去重 → 文本
                       │
                       └─ 旁路: YOLO 静态手势分类(每5帧) → 三重AND门控 → 静态词
                                ↑ 可关闭，低算力设备退化为纯时序识别
@@ -143,7 +143,7 @@ beam search 已实测与贪心等价（WER 0pp 变化，P(blank)≈0.77 概率�
 
 ```
 CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一个文件)
-→ Dataset/DataLoader → 1D Conv(stride=4) + BiLSTM(2层,双向) + CTC Loss → best.pt
+→ Dataset/DataLoader → 1D Conv(stride=2×2) + BiLSTM(2层,双向) + CTC Loss → best.pt
 ```
 
 ## 推理流程（实时）
@@ -152,7 +152,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 1. `preprocess.py` — 预处理 + MediaPipe Hands + 置信度清洗 + 坐标归一化
 2. `window.py` — 滑动窗口（3s/90帧 deque）
 3. `arbitration.py` — 融合仲裁状态机
-4. `model.py` — 1D Conv(stride=4) + BiLSTM(2层,双向) + Linear
+4. `model.py` — 1D Conv(stride=2×2) + BiLSTM(2层,双向) + Linear
 5. `decode.py` — CTC 贪心解码 + 后处理
 6. `inference.py` — 摄像头主循环，串起以上模块
 
@@ -195,7 +195,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | CTC Loss | 调 API | 1 行 | `torch.nn.CTCLoss` |
 | BiLSTM | **自己写** | ~30 行 | `nn.LSTM`，未复用 TFNet BiLSTM.py |
 | 视频→关键点预处理 | **自己写** | ~200 行 | 循环读帧 + 调 MediaPipe + 存 .npy |
-| 模型架构 model.py | **自己写** | ~70 行 | 1D Conv(stride=4) + BiLSTM(2层,双向) + Linear + visual_fusion 模式 |
+| 模型架构 model.py | **自己写** | ~70 行 | 1D Conv(stride=2×2) + BiLSTM(2层,双向) + Linear + visual_fusion 模式 |
 | Dataset/DataLoader | **自己写** | ~90 行 | 读 .npy + 标签解析 + collate_fn |
 | 训练脚本 | **自己写** | ~250 行 | 独立实现，未复用 TFNet Train.py |
 | CTC 贪心解码 | **自己写** | ~40 行 | argmax + unique_consecutive + 去 blank |
@@ -212,7 +212,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 |-------|------|------|------|
 | 0 | 环境搭建（目录 + requirements + 验证） | 0.5h | CPU |
 | 1 | 关键点预处理（6000 视频 → .npy） | 4-6h | CPU，挂机 |
-| 2 | 主路模型训练（1D Conv(stride=4) + BiLSTM + CTC） | 12-24h | GPU，挂机 |
+| 2 | 主路模型训练（1D Conv(stride=2×2) + BiLSTM + CTC） | 12-24h | GPU，挂机 |
 | 3 | CTC 解码（贪心 + 后处理去重） | 1-2h | CPU |
 | 4 | 实时推理管线（6 个模块 + 联调） | 4-6h | CPU |
 | 5 | 旁路 YOLO 分类（数据准备 + 训练 + 集成） | 6-10h | GPU |
