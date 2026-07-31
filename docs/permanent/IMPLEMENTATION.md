@@ -1,17 +1,18 @@
 # 实时手语识别系统 — 实现计划
 
-> 状态：Phase 0-3 已完成（2026-07-31）。Phase 2 结论：WER=66.58% 受 ~5K 数据量限制。
+> 状态：Phase 0-3 已完成（2026-08-01）。Phase 2 结论：WER=66.58% 受 ~5K 数据量限制，工程优化（padding/增强/beam search）均无效。
+> Phase 5 的 YOLO 分类模型已训好（L1290 mAP50=0.985），集成到推理管线待做。
 > 后续路线见 `docs/temporary/实验方案.md`（孤立词预训练 → 数据扩展 → 视觉评估）。
 
 ## 总览
 
 ```
 Phase 0: 环境搭建         ██████████  0.5h   ✅ 完成
-Phase 1: 关键点预处理     ██████████  4-6h   ✅ 完成（5987 .npy）
+Phase 1: 关键点预处理     ██████████  4-6h   ✅ 完成（5987 .npy，含归一化）
 Phase 2: 主路模型训练     ██████████  12-24h ✅ 完成（WER 66.58%，数据瓶颈）
-Phase 3: CTC 解码集成     ██████████  1-2h   ✅ 完成（贪心解码）
+Phase 3: CTC 解码集成     ██████████  1-2h   ✅ 完成（贪心解码；beam 验证等价）
 Phase 4: 实时推理管线     ████████░░  4-6h   待开始
-Phase 5: 旁路 YOLO 分类   ████████░░  6-10h  待开始
+Phase 5: 旁路 YOLO 分类   █████████░  6-10h  🟡 分类模型已完成，集成待做
 Phase 6: 系统联调测试     ██████░░░░  3-4h   待开始
 ```
 
@@ -94,7 +95,7 @@ CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 ### 2.3 模型架构
 ```
 Input (T, 84) 或 (T, 660)  # 660 为 kp+visual concat 模式
-  → 1D Conv (kernel=3, stride=4, 84→256) + ReLU  # T→T/4
+  → 1D Conv × 2 (kernel=3, stride=2, 84→256) + ReLU + LayerNorm  # 总降采样 T→T/4
   → BiLSTM × 2 (hidden_size=512, bidirectional)
   → Linear (1024 → vocab_size)
   → LogSoftmax
@@ -121,7 +122,7 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 - 每个 epoch 后跑 dev set 验证 WER + S/D/I + collapse%
 - 保存 best.pt + last.pt 到 `checkpoints/`
 
-### 2.4.1 实验结果（2026-07-28 → 2026-07-31）
+### 2.4.1 实验结果（2026-07-28 → 2026-08-01）
 | 日期 | 改动 | Best WER |
 |------|------|----------|
 | 2026-07-28 | 原始 baseline（BiLSTM, 原始坐标, batch=1） | 93.15% |
@@ -129,8 +130,9 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 | 2026-07-30 | + stride=4 + blank penalty + 熵正则 + activity detection | 66.85% |
 | 2026-07-30 | + clean_word 一致性修复重训 | 66.58% |
 | 2026-07-31 | 零成本优化（分组 padding / 时序增强 / beam search） | 全部退步或不改善 |
+| 2026-08-01 | 归一化对照（Agent D）：数据本已归一化，复归化无效 | 84.90-96.52%（冷启动轨迹，交叉一致） |
 
-**最终结论**：~5K 数据量是 WER 瓶颈（66.58%），非模型架构或解码策略。突破需更多数据（SLR_Dataset 孤立词预训练 / CSL-Daily 数据扩展，见 docs/temporary/实验方案.md）。
+**最终结论**：~5K 数据量是 WER 瓶颈（66.58%），非模型架构、特征维度、解码策略、归一化或标签完整性。突破需更多数据（SLR_Dataset 孤立词预训练 / CSL-Daily 数据扩展，见 docs/temporary/实验方案.md）。孤立词 94 匹配视频已交付（CombinedDataset 可混入 CE-CSL train）。
 
 ### 2.5 时间估算
 | 因素 | 估算 |
@@ -244,12 +246,14 @@ def ctc_greedy_decode(logits):
 
 ## Phase 5 — 旁路 YOLO 静态手势分类（~6-10h，需 GPU）
 
-### 5.1 数据准备
-- CSL_basic_dataset（235 词）+ CSL_common_dataset（863 词）
-- 合并去重，按 8:2 随机划分 train/val
-- 从每个视频等间隔抽 5 帧（或更多，视视频长度）
-- 生成 YOLO 格式：`images/train/<word>/frame_001.jpg` + 对应 txt 标签
-- 类别数 ≈ 1098（两个数据集大类数）
+### 5.0 当前状态（2026-08-01）
+- **分类模型已训练完成**：L1290 数据集（35 类，2148 训练图）用 `yolov8s.pt`（COCO 预训练）+ `YOLOv8/l1290_data.yaml` 训练，imgsz=640，batch=16，100 epochs。最优 **mAP50=0.985**（epoch 18）、mAP50-95=0.805（epoch 55）。权重 `YOLOv8/runs/l1290/weights/best.pt`
+- **关键坑**：ultralytics 8.4.105 下 `YOLO("yolov8s.yaml").train(pretrained=True)` 不会真正加载预训练权重，必须传 `.pt` 文件；GitHub 下载 SSL 证书验证失败需 `ssl.CERT_NONE` + urllib 手动下载
+- **待做**：将权重接入实时推理管线（每 5 帧跑一次）+ 与主路仲裁
+
+### 5.1 数据准备（L1290 已完成）
+- L1290：35 类静态手势，2148 训练图 / 210 验证图，YOLO 检测格式，原图 640x480
+- 原计划的 CSL_basic_dataset（235 词）+ CSL_common_dataset（863 词）抽帧路线尚未执行（L1290 已提供更干净的检测格式替代）；如旁路需要更广词表，仍可按此路线扩展
 
 ### 5.2 训练 YOLOv8n-cls
 - 用 ultralytics 的 classification 模式（不是 detection，指手势分类）
@@ -263,14 +267,14 @@ def ctc_greedy_decode(logits):
 - 如果关闭 YOLO（低算力模式），旁路静默
 
 ### 5.4 时间估算
-| 步骤 | 时间 |
+| 步骤 | 状态 |
 |------|------|
-| 数据准备、抽帧 | 1-2h |
-| 训练 | 4-6h |
-| 集成推理 | 1-2h |
+| 数据准备、抽帧 | ✅ L1290 数据自带检测格式；basic/common 抽帧路线未走 |
+| 训练 | ✅ 已完成（L1290 mAP50=0.985，100 epochs） |
+| 集成推理 | ⏳ 待做（权重 → 推理管线每 5 帧 + 仲裁） |
 
 ### 5.5 风险
-- **1098 类太多**：部分词只有 1 个样本，分类精度会很低。可以设置置信度阈值，<0.5 的不触发
+- **小数据过拟合**：L1290 仅 2148 训练图，但 COCO 预训练 + 100 epoch 下 mAP50 已达 0.985，饱和后为损失微调。若换数据集需保留预训练
 - **与主路词表重复**：YOLO 输出的词可能在主路 CTC 词表中也有，仲裁层用"主路优先"策略解决
 
 ---
@@ -314,7 +318,7 @@ def ctc_greedy_decode(logits):
                                                        ↓
                                               Phase 4 (推理管线)
                                                        ↓
-                                              Phase 5 (YOLO旁路)
+                                              Phase 5 (YOLO旁路)   ← 分类模型已训好，剩集成
                                                        ↓
                                               Phase 6 (联调测试) → v1 完成
 ```
