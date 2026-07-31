@@ -328,3 +328,30 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 | **L1290 YOLO** | 旁路静态手势分类 | **mAP50=0.985** | 旁路就绪 |
 
 **唯一结论**：WER 66.58% 的天花板来自数据量（~5K 连续句样本），而非模型架构、特征维度、解码策略或归一化。下一步突破只能靠数据扩展（CSL-Daily ~20K 或 SLR 25K 孤立词预训练）。
+
+## 2026-08-01 — 读 CE-CSL 原论文（2409.11960）+ TFNet 轻量化蒸馏路线
+
+### 合并 + 双远端推送【完成】
+- main fast-forward 到 f1b3b2e（全部实验 + 文档交叉验证内容），推送 origin（github）+ gitee2 双远端成功（c4c8380..f1b3b2e）
+
+### 论文要点（哈工程 CE-CSL 原论文，TFNet 即 WER.py 来源项目）
+- 数据集：12 表演者（A-L，8 女 4 男，I/J 听障），5988 视频，3515 词，10.52h，70+ 生活场景，train/dev/test = 4973/515/500，OOV=0
+- **TFNet 在 CE-CSL 上 Dev/Test WER 42.1%/41.9%（本文 SOTA，第二名 MAM-FSD 44.9%）**；RWTH 18.6%/18.6%、RWTH-T 18.0%/19.1%、CSL-Daily 25.1%/23.5%
+- 官方 README 称最新权重 test WER **32.46%**，在百度网盘（提取码 0000）
+- TFNet 架构：RGB 全帧端到端（MAM-FSD CNN backbone）→ 双分支（时域 1D CNN+BiLSTM ⊕ 频域 DFT+1D CNN+BiLSTM）→ 相加 → FC；Loss = CTC + 双 VAE 辅助损失
+- 训练细节：Adam lr=1e-4，**batch_size=2**（与我们一致），55 epochs，35/45 epoch lr 降 80%；随机裁剪 256→224 + 水平翻转(0.5) + 时序 ±20% 缩放；解码 beam=10
+- 消融：纯 CTC 21.3% → +双 VAE 18.6%（RWTH 上 -2.7pp）；时序+频域融合比纯时域 -0.8pp
+- 标注规范（佐证 clean_word 去括号逻辑）：方向词带括号（`他/帮(我)/开门`）、方言词有 Note 注记、数字词自动补齐
+
+### 轻量化评估：TFNet 方案不满足轻量需求
+- TFNet 推理 = 每帧全 RGB 过 CNN（224×224）+ 两套 BiLSTM（时域+频域）+ beam=10，吃 GPU；正是本项目"低算力退化为纯时序识别"想省掉的成本
+- 结论：直接搬正面违反 v1 约束。但双 VAE 辅助损失是纯训练时正则（推理零成本，RWTH 上 -2.7pp），可迁移；频域分支收益小（-0.8pp）要养一套 BiLSTM，性价比低不迁
+
+### 蒸馏路线：重训练一次，轻推理永远【已记入 INSPIRATION #4】
+- **机制**：TFNet（RGB teacher，42%/32.46%）→ 蒸馏 → 我们的关键点模型（student，轻推理不变）
+- 训练期重：RGB 帧与关键点帧**序号天然对齐**，teacher CTC 软概率做 frame-level KL；部署期轻：仍是 84d 关键点 + 单 BiLSTM + 贪心，MediaPipe ~63ms/帧
+- loss：`α·CTC(student,GT) + β·KL(student,teacher)` 软标签；或**伪标签双杀**——teacher 跑 SLR 25K / CSL-Daily 20K 无标注数据生成 gloss，顺带解决数据扩展
+- **成本**：teacher 一次训练最贵（RTX 3090Ti 24GB，训练量 ~10-20x 当前）。本地 TFNet-main 无 checkpoint（仅源码+百度网盘地址），可用官方权重当 teacher 免自训
+- **预期上限**：~24pp 差距大头是表征鸿沟，蒸馏只能教对学生能表达的东西（对齐/切分/去误插），落点 ~60% 出头，别期待 40%
+- 作者团队蒸馏是成熟路线：2303.06820 cross-resolution KD（本地 kdloss 出处）、2402.19118 frame-level 自蒸馏、2207.00928 TSRNet
+- **待定**：teacher 词表 3515 vs student 子词表 479 的软标签对齐方式（student 升 3515 或 teacher 聚到子词表），动手时再定

@@ -30,13 +30,34 @@
 - **适用场景**：v1 即可用
 - **状态**：**已实验并否决**（2026-07-31 时序增强 WER 66.58%→75.69% 退步 9.1pp。84d 低维特征下坐标级增强噪声大于信号，~5K 数据放大了方差而非泛化）
 
-### 4. SeqKD 蒸馏（v2）
-- **文件**：`TFNet-main/DataProcessMoudle.py:521-538`
+### 4. SeqKD 蒸馏（v2）— "重训练一次，轻推理永远"
+- **文件**：`TFNet-main/DataProcessMoudle.py:521-538`（本地已有 `self.kdloss = nn.KLDivLoss(reduction='batchmean')`）
 - **内容**：不同时间分辨率输出互相 KL 蒸馏，免费模型集成效果
 - **好处**：不增加推理成本，通常提升 2-5% WER
 - **代价**：~15 行，需双分支模型结构
 - **适用场景**：v1 效果不够好时
 - **状态**：v2 考虑
+
+#### 2026-08-01 扩展 —— RGB teacher → 关键点 student 蒸馏（轻推理部署方案）
+
+**动机**：读了 CE-CSL 原论文（2409.11960）——TFNet 在 CE-CSL 上 Dev/Test WER **42.1%/41.9%**（本文 SOTA），官方 README 更称最新权重 test WER **32.46%**。我们同一份 ~5K 数据只做到 66.58%。差距大头是表征鸿沟：TFNet 吃**全 RGB 帧 + 端到端 CNN 帧特征**（非 ImageNet 预训练，是 CE-CSL 上训的），我们只吃 84d 关键点。重推理换精度，正面违反 v1 轻量化约束 → 用蒸馏把重推理挪到一次性离线训练。
+
+**方案**（把 TFNet 当 teacher，我们的关键点模型当 student）：
+- 训练期：RGB 帧和关键点帧**序号天然对齐**（同视频），teacher 的 CTC 软概率直接可做 frame-level KL 监督
+- 部署期：学生 = 现有 84d 关键点 + 单 BiLSTM + 贪心，MediaPipe ~63ms/帧，算力分毫不变
+- **伪标签双杀**：teacher 跑 SLR 25K 孤立词 / CSL-Daily 20K 无标注数据 → 生成 gloss 伪标注 → 顺带解决数据扩展
+- loss：`α·CTC(student, GT) + β·KL(student, teacher)`（软标签）或纯伪标签 CTC
+
+**成本**：teacher 那一次训练是最贵的——RGB 全帧端到端，论文用 RTX 3090Ti 24GB，训练量约当前关键点训练的 10-20 倍。官方权重在百度网盘（README 提取码 0000，test 32.46%），**可免自训直接当 teacher**；本地 `TFNet-main/` 无 checkpoint（只有源码 + 下载地址），无 module/bestMoudleNet.pth。加载方式：`ReadConfig.py` + `params/config.ini`（bestModuleSavePath）。
+
+**预期收益上限**：42% 与 66.58% 之间 ~24pp 大头是表征鸿沟，蒸馏只能教对**学生能表达的东西**（对齐、切分、去误插），教不出关键点看不到的区分度。SeqKD 注释 2-5pp，落点 ~60% 出头。真要 40% 档需换输入模态，轻量化随之失去。
+
+**相关论文**（README 列出，同一团队，蒸馏是他们的成熟路线）：
+- 2303.06820 Continuous SLR based on cross-resolution KD（跨分辨率蒸馏——就是 kdloss 的出处）
+- 2402.19118 Continuous SLR based on Motor attention mechanism and frame-level Self-distillation（帧级自蒸馏）
+- 2207.00928 Temporal Super-Resolution Network（TSRNet）
+
+**待定问题**：teacher 输出词表（3515）与 student 词表（479 子词表）不一致时软标签怎么对齐——要么 student 升回 3515，要么 teacher 蒸馏到子词表上的聚合分布。属于实现细节，动手时再定。
 
 ### 5. WERAugment（v2）
 - **文件**：`TFNet-main/videoAugmentation.py:25-81`
