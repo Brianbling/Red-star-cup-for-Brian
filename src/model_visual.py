@@ -15,9 +15,10 @@ from visual_backbone import MobileNetV3Backbone
 class VisualSLRModel(nn.Module):
     def __init__(self, vocab_size, backbone_out_dim=128, conv_dim=256,
                  hidden_size=512, num_layers=2, dropout=0.3, blank_bias=None,
-                 backbone_chunk=30):
+                 backbone_chunk=30, freeze_stages=3):
         super().__init__()
-        self.backbone = MobileNetV3Backbone(out_dim=backbone_out_dim)
+        self.backbone = MobileNetV3Backbone(out_dim=backbone_out_dim,
+                                            freeze_stages=freeze_stages)
         self.backbone_chunk = backbone_chunk
 
         self.conv = nn.Sequential(

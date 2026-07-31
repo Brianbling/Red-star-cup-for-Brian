@@ -24,8 +24,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INDEX_PATH = WORKTREE_ROOT / "isolated_words" / "index.json"
+MAIN_BASE = Path("D:/red star project")
+DEFAULT_INDEX_PATH = MAIN_BASE / "isolated_words" / "index.json"
 
 
 class IsolatedKeypointDataset(Dataset):
@@ -107,7 +107,7 @@ class CombinedDataset(Dataset):
 
 if __name__ == "__main__":
     import sys
-    sys.path.insert(0, str(WORKTREE_ROOT / "src"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from dataset import KeypointDataset
 
     vocab_path = Path("D:/red star project") / "vocab_top478.json"

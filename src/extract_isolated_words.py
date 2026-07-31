@@ -36,11 +36,9 @@ from mediapipe.tasks.python.vision import (
 )
 from mediapipe.tasks.python.vision.core.image import Image, ImageFormat
 
-# 主仓库（数据源 + 模型文件）
+# 主仓库（数据源 + 模型文件 + 输出）
 MAIN_BASE = Path("D:/red star project")
-# 输出目录 = 当前 worktree 根 / isolated_words（与 src 同层）
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = WORKTREE_ROOT / "isolated_words"
+OUTPUT_DIR = MAIN_BASE / "isolated_words"
 MODEL_PATH = MAIN_BASE / "models/hand_landmarker.task"
 
 DATASETS = {
@@ -71,9 +69,10 @@ def normalize_hand(kp_hand):
     return normalized
 
 
-def create_landmarker():
+def create_landmarker(model_path=None):
+    path = Path(model_path) if model_path else MODEL_PATH
     options = HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(MODEL_PATH)),
+        base_options=BaseOptions(model_asset_path=str(path)),
         running_mode=RunningMode.IMAGE,
         num_hands=2,
         min_hand_detection_confidence=0.5,
@@ -152,16 +151,21 @@ def process_video(landmarker, video_path):
     return np.stack(frames, axis=0)
 
 
-def _worker(video_path, save_dir, model_path):
-    """单视频 worker（multiprocessing 用）：独立 landmarker + 断点续跑。"""
+def _init_worker(model_path):
+    """每个 worker 进程初始化一次 landmarker（避免每次视频重复加载模型）。"""
+    global _WORKER_LANDMARKER
+    _WORKER_LANDMARKER = create_landmarker(model_path)
+
+
+def _worker(video_path, save_dir):
+    """单视频 worker（multiprocessing 用）：复用进程级 landmarker + 断点续跑。"""
     video_path = Path(video_path)
     save_path = Path(save_dir) / f"{video_path.stem}.npy"
     if save_path.exists():
         return "skipped", video_path.stem, int(np.load(str(save_path)).shape[0])
 
-    landmarker = create_landmarker(model_path)
+    landmarker = _WORKER_LANDMARKER
     seq = process_video(landmarker, video_path)
-    landmarker.close()
 
     if seq is None:
         return "error", video_path.stem, 0
@@ -186,9 +190,13 @@ def run_dataset(dataset, limit, num_workers, model_path):
     processed = skipped = errors = 0
     frames_ranges = []
 
-    worker_fn = partial(_worker, save_dir=save_dir, model_path=str(model_path))
+    worker_fn = partial(_worker, save_dir=str(save_dir))
 
-    with multiprocessing.Pool(processes=num_workers) as pool:
+    with multiprocessing.Pool(
+        processes=num_workers,
+        initializer=_init_worker,
+        initargs=(str(model_path),),
+    ) as pool:
         for status, video_id, n_frames in pool.imap_unordered(worker_fn, mp4s):
             if status == "ok":
                 processed += 1
@@ -219,17 +227,23 @@ def main():
                         choices=["basic", "common", "all"])
     parser.add_argument("--limit", type=int, default=None,
                         help="每个数据集最多处理 N 个视频（子集验证用）")
+    parser.add_argument("--num-workers", type=int, default=8,
+                        help="多进程 worker 数（8 在 16GB 内存下安全）")
     args = parser.parse_args()
 
     print(f"模型: {MODEL_PATH}")
     print(f"输出: {OUTPUT_DIR}")
-    landmarker = create_landmarker()
 
     datasets = ["basic", "common"] if args.dataset == "all" else [args.dataset]
-    for ds in datasets:
-        run_dataset(ds, args.limit, landmarker)
+    total_processed = total_skipped = total_errors = 0
 
-    landmarker.close()
+    for ds in datasets:
+        p, s, e = run_dataset(ds, args.limit, args.num_workers, MODEL_PATH)
+        total_processed += p
+        total_skipped += s
+        total_errors += e
+
+    print(f"\n全部完成: {total_processed} 处理, {total_skipped} 跳过, {total_errors} 错误")
 
 
 if __name__ == "__main__":

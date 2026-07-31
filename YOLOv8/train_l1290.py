@@ -4,7 +4,10 @@
     python -u train_l1290.py > train_l1290.log 2>&1
 
 说明：
-- 用 yolov8s.yaml 结构 + COCO 预训练权重（pretrained=True）
+- 用 yolov8s.pt（COCO 预训练权重）+ yolov8s.yaml 结构微调
+  注意：ultralytics 8.4.105 中 `YOLO("yolov8s.yaml").train(pretrained=True)`
+  不会真正加载预训练权重（yaml 模型无 ckpt，bool pretrained 不触发 load_checkpoint），
+  必须传 .pt 文件路径才会加载 COCO 权重。
 - imgsz=640（原图 640x480）
 - batch=16（RTX 5060 Laptop 8.5GB，若 OOM 降到 8）
 - workers=0（Windows 兼容）
@@ -18,13 +21,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
-    model = YOLO(os.path.join(HERE, "yolov8s.yaml"))
+    model = YOLO(os.path.join(HERE, "yolov8s.pt"))
     model.train(
         data=os.path.join(HERE, "l1290_data.yaml"),
         epochs=100,
         batch=16,
         imgsz=640,
-        pretrained=True,
         workers=0,
         project=os.path.join(HERE, "runs"),
         name="l1290",

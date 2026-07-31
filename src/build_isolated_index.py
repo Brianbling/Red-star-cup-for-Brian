@@ -15,12 +15,11 @@ import sys
 from pathlib import Path
 
 MAIN_BASE = Path("D:/red star project")
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
-KEYPOINT_ROOT = WORKTREE_ROOT / "isolated_words" / "keypoints"
-INDEX_PATH = WORKTREE_ROOT / "isolated_words" / "index.json"
+KEYPOINT_ROOT = MAIN_BASE / "isolated_words" / "keypoints"
+INDEX_PATH = MAIN_BASE / "isolated_words" / "index.json"
 VOCAB_PATH = MAIN_BASE / "vocab_top478.json"
 
-sys.path.insert(0, str(WORKTREE_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vocab_utils import clean_word
 
 

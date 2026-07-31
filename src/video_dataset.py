@@ -103,18 +103,15 @@ class VideoDataset(Dataset):
 
         if len(frames) < len(idxs):
             # 视频提前结束（帧数统计与实际不符），重新按实读帧均匀采样
-            frames = self._fallback_uniform(frames, total, video_path)
+            frames = self._fallback_uniform(video_path)
 
         arr = np.stack(frames).astype(np.float32) if frames else np.zeros(
             (0, 224, 224, 3), dtype=np.float32
         )
         return self._pad_frames(arr, token_ids, video_id)
 
-    def _fallback_uniform(self, frames, declared_total, video_path):
-        """实际读到的帧不足：降级用已读帧 + 全量重读均匀采样兜底。"""
-        n = len(frames)
-        if n == 0:
-            return frames
+    def _fallback_uniform(self, video_path):
+        """实际读到的帧不足：全量重读后均匀采样兜底。"""
         cap = cv2.VideoCapture(str(video_path))
         all_frames = []
         while True:

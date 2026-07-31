@@ -159,15 +159,19 @@ def main():
         vocab_size=vocab_size,
         blank_bias=args.blank_bias,
         backbone_chunk=args.backbone_chunk,
+        freeze_stages=args.freeze_stages,
     ).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
 
-    backbone_trainable = [p for p in model.backbone.parameters() if p.requires_grad]
+    # 预训练 backbone (mobilenet.features) 用低 LR，其余新层（pool/head/conv/lstm/fc）用高 LR
+    backbone_trainable = [
+        p for p in model.backbone.mobilenet.features.parameters() if p.requires_grad
+    ]
     head_params = []
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        if name.startswith("backbone"):
+        if name.startswith("backbone.mobilenet.features"):
             continue
         head_params.append(p)
 
