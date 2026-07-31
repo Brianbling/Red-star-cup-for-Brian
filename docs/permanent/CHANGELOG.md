@@ -23,7 +23,7 @@
 
 ### Phase 2/3 — 模型 + 训练 + 解码 [代码完成，待训练]
 - **`src/build_vocab.py`**：从 CE-CSL CSV 构建词表 → `vocab.json`（3515 tokens）
-- **`src/model.py`**：1D Conv(84→256) + BiLSTM(256→512, 2层) + Linear(→vocab_size) + LogSoftmax，13.1M 参数
+- **`src/model.py`**：1D Conv(84→256, stride=4) + BiLSTM(256→512, 2层,双向) + Linear(→vocab_size) + LogSoftmax + blank_bias=5.32，~14.0M 参数（3515 词表）
 - **`src/dataset.py`**：KeypointDataset 读取 .npy + CSV 标签，collate_fn time-major pad
 - **`src/train.py`**：CTC Loss + Adam + ReduceLROnPlateau + early stopping(patience=10) + WER 评估（复用 TFNet WER.py）
 - **`src/decode.py`**：CTC 贪心解码（argmax → unique_consecutive → 去 blank）
@@ -37,7 +37,7 @@
 ### 2026-07-28 (晚)
 - **Phase 1 进度**：train 1796/4972 (36.1%)，正常运行中
 - 清理无关进程：Anaconda Navigator (pythonw.exe x2)
-- **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 13.1M（非~5M）
+- **文档校正**：ARCHITECTURE.md 训练流程描述（独立实现非复用 TFNet）、IMPLEMENTATION.md 词表 3515（非~500-1000）、模型 ~14.0M（非~5M）
 
 ## 2026-07-29
 
@@ -85,7 +85,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 1. **SR-CTC 的 KL 力不够**：smooth 后分布变化极小（KL≈0.01），不敌 CTC loss（~6.0）。论文中 SR-CTC 是辅助正则项，不是 blank 坍塌的银弹
 2. **bias init 是双刃剑**：压过头（-4.0）模型无法学到对齐，CTC 需要 blank 做分隔符
 3. **`zero_infinity=True` 是毒药**：inf batch 被丢弃后 loss 表面下降，实际没学到东西
-4. **Conformer/Transformer 天然抗 blank 坍塌**（Wenet/ESPnet 经验）：attention 提供更均匀的对齐分布，BiLSTM 在长 T/L 比下尤易塌陷
+4. **BiLSTM + CTC 天然易 blank 坍塌**：BiLSTM 在长 T/L 比下尤易塌陷（T/L=68:1），通过 stride=4 + blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 联合解决
 
 #### 尚待尝试
 
@@ -93,7 +93,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - `zero_infinity=True` + stride=4（让 inf batch 跳过而非硬撑梯度爆炸）
 - 1D Conv+ResNet 替代当前模型（CSL-Daily 论文做法）
 - 先训最长句子（token 比空白多则 blank/T 比更低），而非全量数据
-- Conformer/Transformer encoder 替代 BiLSTM
+- Conformer/Transformer encoder 替代 BiLSTM（**已放弃——BiLSTM 实验通过 blank_bias + blank penalty + activity detection 解决坍塌，Conformer 未在代码中实现**）
 
 ### 2026-07-30 — Activity Detection 训练完成 + 四项审计
 
@@ -102,7 +102,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **四项审计**：
   1. **丢弃帧 = 手部丢失帧**：99.7% 是零帧（手部丢失），0.3% 是 <5帧 的短有效段（正确丢弃），0 长有效段被误杀。min_active_frames=5 无误杀
   2. **多段样本 vs 坍缩重叠**：多段样本 81/509 (15.9%)，平均 2.3 段/样本。精确重叠需模型在原始 dev 集跑推理，但 15.9% < 31.2% 说明多段只是坍缩的部分原因
-  3. **跨段合并风险**：4 帧零分隔符，Conformer self-attention 理论上可跨过，但零帧含零信息，attention 权重应弱。需实际推断验证
+  3. **跨段合并风险**：4 帧零分隔符，BiLSTM 理论上可跨过，但零帧含零信息，实际影响应弱
   4. **collapse% 变化**：159/509 → 49/509 (31.2% → 9.4%, -70%)
 - **核心结论**：activity detection 技术上成功定位 blank 坍缩，但 WER 没变说明坍缩样本不是 WER 瓶颈。剩余 66.85% 错误来自 token 预测错误（插入/删除/替换），而非 blank 坍缩
 - **下一步方向**：分析 token 级错误分布 (insertion/deletion/substitution)，定位 WER 真正瓶颈
@@ -129,7 +129,7 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 
 ### 2026-07-30 — clean_word 修复后重训结果
 
-- **训练配置**：top-478 子词表，activity detection (min=5, gap=3)，Conformer 10.4M
+- **训练配置**：top-478 子词表，activity detection (min=5, gap=3)，BiLSTM ~10.8M
   - train 4910 样本（4009 被切分，移除 25.7% 帧），dev 512 样本（409 被切分，移除 32.6% 帧）
 - **结果**：67 epoch early stop，**best WER=66.58% (Epoch 52)**
   - Best S/D/I：S=21.3%，D=41.8%，I=3.5%，collapse=4.1%，zero_pred=21/512
@@ -187,4 +187,51 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 
 #### 下一步
 - 视觉特征路线暂时搁置。需要 domain-specific 的手部视觉 encoder（如在手语数据上 fine-tune MobileNetV3），而非直接用 ImageNet 预训练特征
-- 当前最优路线：全量 kp-only + activity detection（WER 66.85%），继续分析 token 级错误分布
+
+## 2026-07-31
+
+### 零成本优化路线实验 — 三项均未达预期
+
+**目标**：在不改模型架构、不加新数据的前提下，通过训练/解码优化将 WER 从 66.58% 降到 50-54%。
+
+#### 实验总结
+
+| 实验 | 配置 | Best WER | vs Baseline | 结论 |
+|------|------|----------|-------------|------|
+| Baseline | bs=1, no augment, greedy | 66.58% | — | — |
+| Exp-1 | grouped bs=4 | 68.83% | 退步 2.3pp | 分组 padding 无帮助 |
+| Exp-2 | bs=4 + temporal augment | 75.69% | 退步 9.1pp | 坐标增强是噪声不是信号 |
+| Exp-3 | beam search (beam=3) | 持平 | 0pp | beam 与 greedy 等价 |
+
+#### Exp-1：Grouped Padding (bs=4)
+- 分组 padding 减少了填充量（~60%→~20%），但每组 B=2-4 样本，有效 batch 变小
+- D（删除）从 41.8% 波动到 47-53%，collapse 10% 左右
+- **结论**：分组后 blank penalty 失效风险高，batch 小导致梯度噪声大。序列长度差异本身是有效的正则化
+
+#### Exp-2：时序增强 (temporal_scale + jitter + mask)
+- temporal_scale (0.8-1.2x)，坐标 jitter (sigma=0.005)，关键点 mask (5%)
+- S（替换）从 18% 飙到 28-29%：增强引入了模型无法消化的变化
+- D 保持在 42-43%，collapse 7.8%
+- **结论**：在 84d 低维特征空间下，坐标级增强的噪声大于信号。数据量 ~5K 不足，增强放大了方差而非提升泛化
+
+#### Exp-3：CTC Prefix Beam Search (beam=3)
+- 每样本 ~4.1s（比贪心 0.05s 慢 80x），512 样本需 ~35 分钟
+- Greedy 和 beam 输出完全一致：模型 P(blank)≈0.77，概率分布过于尖锐，无备选路径可探索
+- **结论**：beam search 只在模型输出足够"犹豫"时有价值，当前模型太偏 blank。未来不要尝试 beam search，除非模型架构/数据有根本性变化
+
+#### 零成本优化的根本限制
+数据量不足（~5K 样本）是 WER 瓶颈。三项优化思路在理论上正确，但在 5K 数据规模下：
+- 分组 padding 减小的填充量不足以抵消 batch 变小带来的梯度噪声
+- 坐标增强在低维特征下信噪比太差
+- 模型的概率分布过于尖锐，beam search 和 greedy 等价
+- **blank_bias=0 会让模型在 1 epoch 内 P(blank) 从 0→1.0**，+5.32 是正确设计
+
+**下一步**：要突破 66.58% 的平台，需要更多数据或预训练，非训练/解码侧的工程优化。
+
+#### 代码变更
+- **新增** `src/augmentation.py` — 时序增强函数
+- **新增** `src/beam_quick_test.py` — beam search 快速验证（10 样本）
+- **新增** `src/validate_beam.py` — beam search 全量验证脚本
+- **修改** `src/dataset.py` — `collate_fn_grouped` + augment 集成
+- **修改** `src/decode.py` — `ctc_prefix_beam_search`
+- **修改** `src/train.py` — `--group-size`/`--augment`/`--beam-width` 参数

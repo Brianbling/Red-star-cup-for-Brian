@@ -339,5 +339,19 @@ v2+: attention rescoring (#13) 对 nbest 做重排序
 - **问题**：MobileNetV3-Small ImageNet 预训练的 576d 特征用于手语识别，WER 从 66.58% 升到 84.79%（raw concat）和 91.61%（projected fusion）
 - **根因**：ImageNet 特征编码物体类别（猫、车、建筑），与手语手势的语义空间几乎正交。576d 噪声淹没了 84d 有效关键点信号
 - **教训**：通用视觉 backbone 的预训练特征不是免费的——领域不匹配时，高维特征就是高维噪声。手语需要 domain-specific 的手部视觉 encoder（如在手语数据上 fine-tune）
-- **修复**：视觉融合路线暂搁置，当前最优路线为 kp-only + activity detection（WER 66.85%）
+- **修复**：视觉融合路线暂搁置，当前最优路线为 kp-only + activity detection（WER 66.58%）
+
+### LL-3: 零成本工程优化在数据量不足时无效
+- **日期**：2026-07-31
+- **问题**：三项"零成本"优化（分组 padding、时序增强、beam search）均未能改善 WER。分组 padding 退步 2.3pp，时序增强退步 9.1pp，beam search 零改善
+- **根因**：数据量不足（~5K 样本）是 WER 天花板。分组 padding 减小 batch 导致梯度噪声增大；坐标增强在低维特征空间下 SNR 太差；模型 P(blank)~0.77 导致 beam 和 greedy 等价
+- **教训**：优化策略在数据量充足时有效，但在数据饥饿区可能反向效果。突破 66.58% 需要更多数据或预训练，非工程优化
+- **修复**：三项均已记录实验结论，未来会话不应重复尝试
+
+### LL-4: blank_bias=+5.32 是训练必需设计，非 hack
+- **日期**：2026-07-31
+- **问题**：怀疑 blank_bias=+5.32 是 hack，尝试去掉（bias=0）
+- **结果**：P(blank) 在 1 epoch 内从 0 塌向 1.0，模型完全坍塌。+5.32 使初始 P(blank) = sigma(5.32) = 0.995
+- **根因**：CTC 需要 blank 做分隔符，初始化时高 P(blank) 确保模型只在有信心时降低 blank。不给正 bias 时 blank 是唯一"安全"路径（T/L=68:1）
+- **教训**：这是稳定初始化的必需设计，不要再次尝试去掉或改为负值
 

@@ -1,17 +1,18 @@
 # 实时手语识别系统 — 实现计划
 
+> 状态：Phase 0-3 已完成（2026-07-31）。Phase 2 结论：WER=66.58% 受 ~5K 数据量限制。
+> 后续路线见 `docs/temporary/实验方案.md`（孤立词预训练 → 数据扩展 → 视觉评估）。
+
 ## 总览
 
 ```
-Phase 0: 环境搭建         ██░░░░░░░░  0.5h   无需 GPU
-Phase 1: 关键点预处理     ██████░░░░  4-6h   仅 CPU，可通宵挂机
-Phase 2: 主路模型训练     ██████████  12-24h GPU，取决于 epoch 数
-Phase 3: CTC 解码集成     ███░░░░░░░  1-2h   无需 GPU
-Phase 4: 实时推理管线     ████████░░  4-6h   仅 CPU
-Phase 5: 旁路 YOLO 分类   ████████░░  6-10h  GPU
-Phase 6: 系统联调测试     ██████░░░░  3-4h   CPU + 摄像头
-─────────────────────────────────────────
-合计                                    约 30-50h（含训练等待）
+Phase 0: 环境搭建         ██████████  0.5h   ✅ 完成
+Phase 1: 关键点预处理     ██████████  4-6h   ✅ 完成（5987 .npy）
+Phase 2: 主路模型训练     ██████████  12-24h ✅ 完成（WER 66.58%，数据瓶颈）
+Phase 3: CTC 解码集成     ██████████  1-2h   ✅ 完成（贪心解码）
+Phase 4: 实时推理管线     ████████░░  4-6h   待开始
+Phase 5: 旁路 YOLO 分类   ████████░░  6-10h  待开始
+Phase 6: 系统联调测试     ██████░░░░  3-4h   待开始
 ```
 
 ---
@@ -88,18 +89,20 @@ CE-CSL/CE-CSL/keypoints/test/<video_id>.npy    # 手部丢失帧全零向量
 - 读取 `.npy` 关键点文件 → tensor (T, 84)
 - 读取对应 CSV 标签 → token ids → tensor (L,)
 - `collate_fn`：按 T 降序排列，pad 到 batch_max_len
-- batch_size=1（序列长度差异大）
+- batch_size=2（train.py 默认）。分组 padding (bs=4) 实验证明退步 2.3pp，序列长度差异本身是有效正则化
 
 ### 2.3 模型架构
 ```
 Input (T, 84) 或 (T, 660)  # 660 为 kp+visual concat 模式
-  → 1D Conv (kernel=5, stride=4, 84→256) + ReLU + BN  # T→T/4
-  → Conformer Encoder × 4 (d_model=256, heads=4, ff=1024, conv_kernel=15)
-  → Linear (256 → vocab_size)
+  → 1D Conv (kernel=3, stride=4, 84→256) + ReLU  # T→T/4
+  → BiLSTM × 2 (hidden_size=512, bidirectional)
+  → Linear (1024 → vocab_size)
   → LogSoftmax
 ```
 
-实际参数量：~13-15M（视 fusion 模式）。Conformer 替代了原 BiLSTM 以解决 CTC blank 坍塌问题。
+实际参数量：~14.0M（全量 3515 词表）/ ~10.8M（top-478 词表）。使用 BiLSTM 而非 Conformer（尽管文档曾计划升级为 Conformer，核心代码未实现）。
+
+FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是 CTC 训练稳定性的必需设计，非 hack。不给正 bias 时 P(blank) 会在 1 epoch 内从 0 → 1.0，导致大幅 blank 坍塌。
 
 **视觉融合模式**（通过 `--visual-fusion` 控制）：
 - `none`：纯 kp-only，84d 输入
@@ -109,42 +112,54 @@ Input (T, 84) 或 (T, 660)  # 660 为 kp+visual concat 模式
 **实验结论（2026-07-30）**：raw concat collapse=0% 但 WER=84.79%（比 kp-only 66.58% 差），projected 更差（91.61%）。MobileNetV3-Small ImageNet 特征编码物体类别，对 CSL 手语无效。视觉融合路线暂搁置。
 
 ### 2.4 训练
-- Loss: CTC Loss，blank=0
-- Optimizer: Adam, lr=0.001
-- Scheduler: ReduceLROnPlateau, patience=5
-- Early stopping: patience=10 on dev WER
+- Loss: CTC Loss，blank=0，`zero_infinity=False`（不要用 True，会掩盖 blank 坍塌）
+- Optimizer: Adam, lr=0.001, weight_decay=1e-4
+- Scheduler: ReduceLROnPlateau, patience=5, factor=0.5
+- Early stopping: patience=15 on dev WER（当前实现）
 - Epochs: 50-100
-- 每个 epoch 后跑 dev set 验证 WER
+- blank penalty（threshold=0.65, weight=20.0）+ 熵正则（weight=0.01）
+- 每个 epoch 后跑 dev set 验证 WER + S/D/I + collapse%
 - 保存 best.pt + last.pt 到 `checkpoints/`
+
+### 2.4.1 实验结果（2026-07-28 → 2026-07-31）
+| 日期 | 改动 | Best WER |
+|------|------|----------|
+| 2026-07-28 | 原始 baseline（BiLSTM, 原始坐标, batch=1） | 93.15% |
+| 2026-07-29 | + 坐标归一化 / top-478 子词表 / blank_bias | ~93-95%（blank 坍塌） |
+| 2026-07-30 | + stride=4 + blank penalty + 熵正则 + activity detection | 66.85% |
+| 2026-07-30 | + clean_word 一致性修复重训 | 66.58% |
+| 2026-07-31 | 零成本优化（分组 padding / 时序增强 / beam search） | 全部退步或不改善 |
+
+**最终结论**：~5K 数据量是 WER 瓶颈（66.58%），非模型架构或解码策略。突破需更多数据（SLR_Dataset 孤立词预训练 / CSL-Daily 数据扩展，见 docs/temporary/实验方案.md）。
 
 ### 2.5 时间估算
 | 因素 | 估算 |
 |------|------|
-| 模型参数 | **13.1M**（初始预估 ~5M 偏低） |
-| 每 epoch 训练 | ~10-15min（batch_size=1，6000 样本） |
+| 模型参数 | ~14.0M（3515 词表）/ ~10.8M（478 词表） |
+| 每 epoch 训练 | ~10-15min（batch_size=2，~5K 样本） |
 | 50 epoch | ~10-12h |
 | 早停可能提前 | ~30 epoch / ~6h |
 | 建议 | 先跑 3-5 epoch 看 loss 下降趋势，正常再全量 |
 
 ### 2.6 风险
-- **CTC 不收敛**：最常见的坑。先确保 blank 位置正确，input_lengths 计算正确（BiLSTM 不降时间维，input_lengths = T）
-- **全零帧过多**：手部丢失严重的话，考虑加 mask 机制
-- **WER 很高（>80%）**：v1 预期就是高，不用慌。可以加少量 TFNet 的 Transformer 层试一下
+- **CTC blank 坍塌**：核心风险（T/L=68:1）。已通过 stride=4 + blank_bias=+5.32 + blank penalty + 熵正则 + activity detection 解决
+- **全零帧过多**：手部丢失严重的话，activity_detect.py 已实现切分
+- **WER 平台（~66%）**：数据量瓶颈，非模型问题。工程优化（padding/增强/beam search）均已证明无效
 
 ---
 
 ## Phase 3 — CTC 解码集成（~1-2h，CPU）
 
-### 3.1 贪心解码（自己写）
+### 3.1 贪心解码（自己写，已完成 src/decode.py）
 ```python
 def ctc_greedy_decode(logits):
-    # logits: (T, vocab_size+1)
+    # logits: (T, vocab_size)
     # 1. argmax 每帧
-    # 2. 合并连续相同 token
+    # 2. unique_consecutive 合并连续相同 token
     # 3. 去掉 blank(0)
     # 返回 token id 序列
 ```
-约 30 行代码。如果 ctc_decoders 能编译成就用它的 C++ 版本（更快）。
+约 30 行代码。已实现。beam search 实验证明与贪心等价（P(blank)≈0.77），无需替换。
 
 ### 3.2 后处理
 - 连续重复字符合并
@@ -222,7 +237,7 @@ def ctc_greedy_decode(logits):
 
 ### 4.3 风险
 - **MediaPipe 实时推理延迟**：实际测试下来如果 >50ms/帧，30fps 跟不住，需要降分辨率或跳帧
-- **模型推理延迟**：BiLSTM 序列长度 90 时推理应该 <10ms，问题不大
+- **模型推理延迟**：BiLSTM 序列长度 22（90 帧窗口 / stride 4）时推理应该 <10ms，问题不大
 - **YOLO 每 5 帧**：如果 YOLOv8n 推理 >50ms，可以改为每 10 帧
 
 ---
@@ -284,7 +299,7 @@ def ctc_greedy_decode(logits):
 - 无手部时（测试无输出不崩溃）
 
 ### 6.4 已知限制确认
-- BiLSTM 双向延迟 ~150ms — 目测是否可接受
+- BiLSTM 双向延迟 ~150-300ms — 目测是否可接受
 - 无语言模型 — 观察输出抖动程度
 - 近形手势 — 记录混淆样例，v2 针对性优化
 

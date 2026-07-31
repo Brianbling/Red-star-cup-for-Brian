@@ -68,13 +68,13 @@
     └──────────────────────────────────────────┘
              │                        │
              ▼                        ▼
-    ┌─────────────┐      ┌──────────────────────┐
-    │  静态词文本   │      │   时序模型 (主路)     │
-    │  (旁路)      │      │                      │
-    └─────────────┘      │  1D Conv (关键点编码)  │
-                         │  BiLSTM (2层,双向)     │
-                         │  Linear → CTC         │
-                         └──────────┬───────────┘
+    ┌─────────────┐      ┌────────────────────────┐
+    │  静态词文本   │      │    时序模型 (主路)      │
+    │  (旁路)      │      │                        │
+    └─────────────┘      │  1D Conv (关键点编码)   │
+                         │  BiLSTM (2层,双向)      │
+                         │  Linear → CTC          │
+                         └──────────┬─────────────┘
                                     │
                                     ▼
                          ┌──────────────────────┐
@@ -153,8 +153,9 @@ else:
 
 ### 5. 时序模型
 - **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维，stride=4 降采样（T→T/4）
-- **Conformer Encoder**：4 层 Conformer（d_model=256, 4 heads），替代原 BiLSTM
+- **BiLSTM**：2 层双向 LSTM（hidden_size=512），~14.0M 参数（3515 词表）/ ~10.8M（478 词表）
 - **Linear + LogSoftmax**：输出到词表大小的 log 概率
+- **blank_bias 初始化**：FC 层 blank token 的 bias 初始化为 +5.32，使 P(blank) ~ 0.995。不给正 bias 时 P(blank) 会在 1 epoch 内从 0 → 1.0，导致 blank 坍塌。这是训练稳定性必需的设计，非 hack
 - **可选视觉融合**：支持 MobileNetV3-Small 576d 特征融合（`--visual-fusion raw/projected`），但实验证明 ImageNet 特征不适用于手语，当前默认 kp-only
 
 ### 6. CTC 解码 + 后处理
@@ -176,7 +177,7 @@ else:
 |------|------|
 | BiLSTM 替为单向 | 双向带来 ~150-300ms 延迟，人无感知 |
 | 语言模型校正 | 贪心后接 KenLM/n-gram，先跑通再优化 |
-| Beam search | 实时场景太慢，贪心够用 |
+| Beam search | 实验证明与贪心等价（P(blank)≈0.77，概率分布太尖锐）。不改模型架构无价值 |
 | 近形手势混淆 | 属训练数据和模型能力问题，非架构问题 |
 | MediaPipe Holistic | Hands 够用，肢体语义不明显时省算力 |
 | MobileNetV3 视觉特征 | ImageNet 预训练特征与手语无关，实验证明反而降低 WER（84.79% vs 66.58%）。domain-specific 视觉 encoder 留 v2 |
@@ -190,7 +191,7 @@ CE-CSL 视频
   → MediaPipe Hands 逐帧提取关键点
   → 保存 .npy (每个视频一个文件)
   → 标签按 / 分割为词序列
-  → 训练 1D Conv + BiLSTM + CTC
+  → 训练 1D Conv(stride=4) + BiLSTM(2层,双向) + CTC
   → 导出 .pt 权重
 ```
 
