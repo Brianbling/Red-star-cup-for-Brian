@@ -15,9 +15,9 @@ from augmentation import apply_augmentation
 class KeypointDataset(Dataset):
     def __init__(self, base_dir, split, word2idx, activity_detect=False,
                  min_active_frames=5, gap_frames=3, visual_only=False,
-                 no_visual=False, augment=False):
+                 no_visual=False, augment=False, keypoint_subdir="keypoints"):
         self.base_dir = Path(base_dir)
-        self.keypoint_dir = self.base_dir / "keypoints" / split
+        self.keypoint_dir = self.base_dir / keypoint_subdir / split
         self.visual_dir = self.base_dir / "visual_features" / split
         self.word2idx = word2idx
         self.activity_detect = activity_detect

@@ -121,6 +121,11 @@ def main():
                         help="Override checkpoint save directory")
     parser.add_argument("--blank-bias", type=float, default=5.32,
                         help="Initial FC bias for blank token (0.0=uniform start, 5.32=legacy)")
+    parser.add_argument("--keypoint-subdir", type=str, default="keypoints",
+                        help="Keypoint subdirectory under keypoint_base (default: keypoints, "
+                             "use 'keypoints_normalized' for normalized data)")
+    parser.add_argument("--epochs", type=int, default=100,
+                        help="Max epochs (default 100; use 15 for quick experiments)")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -162,6 +167,7 @@ def main():
         visual_only=args.visual_only,
         no_visual=no_visual,
         augment=args.augment,
+        keypoint_subdir=args.keypoint_subdir,
     )
     dev_set = KeypointDataset(
         KEYPOINT_BASE, "dev", word2idx,
@@ -171,6 +177,7 @@ def main():
         visual_only=args.visual_only,
         no_visual=no_visual,
         augment=False,
+        keypoint_subdir=args.keypoint_subdir,
     )
     print(f"训练集: {len(train_set)} 样本, 验证集: {len(dev_set)} 样本")
 
