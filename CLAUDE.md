@@ -41,7 +41,7 @@ D:/red star project/
 ├── README.md                 # 项目概览
 ├── requirements.txt          # Python 依赖
 ├── vocab.json                # 词表（build_vocab.py 生成，3515 tokens）
-├── vocab_top478.json         # 子词表（top-478 高频词，快速验证用）
+├── vocab_top478.json         # 子词表（top-478 高频词 + blank = 479 tokens，快速验证用）
 ├── docs/                     # 项目文档（除 CLAUDE.md 外所有 md）
 │   ├── permanent/            # 永久保留，始终与代码同步
 │   │   ├── ARCHITECTURE.md   # 系统架构设计文档（权威参考）
@@ -221,6 +221,12 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 5 | 旁路 YOLO | 待开始 |
 | 6 | 联调测试 | 待开始 |
 
+**Phase 2 实验结论**：
+- 当前最优：全量 kp-only + activity detection，top-478 子词表，best WER **66.58%**（Epoch 52，D=41.8% S=21.3% I=3.5%）
+- **WER 瓶颈 = 数据量（~5K 样本）**，不是模型架构（BiLSTM 13.5M）、特征维度（84d）、解码策略（贪心）或标签完整性
+- 已排除的假设（详见 CHANGELOG + Landmines）：blank 坍塌、视觉特征融合、activity detection、clean_word 标签 bug、分组 padding、时序增强、beam search
+- 下一步（`docs/temporary/实验方案.md`）：SLR 25K 孤立词预训练 + CSL-Daily 20K 数据扩展
+
 ## 工作流治理（防幻觉与决策一致性）
 
 ### 1. 权威文档层级
@@ -256,12 +262,12 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | TFNet 复用 | "TFNet BiLSTM.py/Train.py/DataProcessMoudle.py 被复用" | 只有 WER.py 被复用，模型/训练/数据加载均独立实现 |
 | MediaPipe API | "用 `mp.solutions.hands`" | 已迁移到 `mp.tasks.vision.HandLandmarker`，IMAGE 模式 |
 | 词表大小 | "~500-1000 词" | 3515 tokens（vocab.json） |
-| 模型参数 | "~5M" | ~14.0M（3515 词表）, ~10.8M（478 词表） |
-| 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/` |
+| 模型参数 | "~5M" | 13.5M（vocab=3515，BiLSTM 2 层 512d）；子词表 vocab=479 时 10.4M（实测 13,515,451 / 10,403,551） |
+| 视频路径 | "CE-CSL/video/" | 实际在 `CE-CSL/CE-CSL/video/{train,dev,test}/{A-L}/`（数据已迁移至 E:/CE-CSL/CE-CSL） |
 | 复用决策逻辑 | "能复用的就复用" | **删比重写更费劲就不复用。** 不为了"遵守计划"而制造垃圾代码 |
-| 归一化已实现 | "preprocess_keypoints.py 做了手腕归一化" | 未实现，Phase 1 存的是原始坐标 |
+| 归一化已实现 | "归一化代码已在 main 分支" | E: 训练数据已归一化（手腕原点 + 腕→中指根缩放，实测有负值/超 [0,1] 坐标），但 **main 分支 `src/preprocess_keypoints.py` 仍是原始坐标版本**。归一化代码在 `worktree-fix-preprocess-normalization` 分支（提交 6c1a17c/37d90df）。若重新跑预处理需先合并该分支 |
 | ctc_decoders | "C++ CTC 解码库可用" | 存在但未编译/未使用，目前用自写贪心解码 |
-| CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。T/L=68:1 是根本原因 |
+| CTC blank 坍塌 | "loss 下降 = 模型在学习" | `zero_infinity=True` 丢弃 inf batch，loss 表面下降但模型输出全 blank。长序列下 T/L 平均 ~34:1（实测 dev 数据，极端样本 50:1+），blank 是 CTC 最便宜路径 |
 | SR-CTC 能救 blank | "CR-CTC 论文的 SR-CTC 能压制 blank" | KL 力差 ~500x（0.01 vs 6.0），拦不住。SR-CTC 是辅助正则项，不是 blank 坍塌的银弹 |
 | FC bias 反 blank | "给 blank 大负 bias 就能压制" | 压过头（-4.0）模型死锁，WER=100% 永远不动。CTC 需要 blank 做分隔符，不能完全杀死 |
 | Activity Detection | "去掉手部丢失帧，WER 就大幅下降" | collapse% 从 31.2% 降到 9.4%（-70%），但 WER 不变（66.5%→66.85%）。坍缩样本不是 WER 瓶颈，剩余错误是 token 预测错误 |

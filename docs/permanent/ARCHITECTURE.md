@@ -153,7 +153,7 @@ else:
 
 ### 5. 时序模型
 - **1D Conv 编码层**：将每帧 84 维关键点（左右手各 21 点 × 2 坐标）升维到 256 维，stride=4 降采样（T→T/4）
-- **BiLSTM**：2 层双向 LSTM（hidden_size=512），~14.0M 参数（3515 词表）/ ~10.8M（478 词表）
+- **BiLSTM**：2 层双向 LSTM（hidden_size=512），13.5M 参数（3515 词表）/ 10.4M（vocab=479 词表，实测 13,515,451 / 10,403,551）
 - **Linear + LogSoftmax**：输出到词表大小的 log 概率
 - **blank_bias 初始化**：FC 层 blank token 的 bias 初始化为 +5.32，使 P(blank) ~ 0.995。不给正 bias 时 P(blank) 会在 1 epoch 内从 0 → 1.0，导致 blank 坍塌。这是训练稳定性必需的设计，非 hack
 - **可选视觉融合**：支持 MobileNetV3-Small 576d 特征融合（`--visual-fusion raw/projected`），但实验证明 ImageNet 特征不适用于手语，当前默认 kp-only

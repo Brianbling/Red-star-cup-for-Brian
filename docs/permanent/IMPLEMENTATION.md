@@ -100,7 +100,7 @@ Input (T, 84) 或 (T, 660)  # 660 为 kp+visual concat 模式
   → LogSoftmax
 ```
 
-实际参数量：~14.0M（全量 3515 词表）/ ~10.8M（top-478 词表）。使用 BiLSTM 而非 Conformer（尽管文档曾计划升级为 Conformer，核心代码未实现）。
+实际参数量：13.5M（全量 3515 词表）/ 10.4M（top-479 词表）。使用 BiLSTM 而非 Conformer（尽管文档曾计划升级为 Conformer，核心代码未实现）。
 
 FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是 CTC 训练稳定性的必需设计，非 hack。不给正 bias 时 P(blank) 会在 1 epoch 内从 0 → 1.0，导致大幅 blank 坍塌。
 
@@ -135,7 +135,7 @@ FC 层 blank token bias 初始化为 +5.32，确保 P(blank) ~ 0.995——这是
 ### 2.5 时间估算
 | 因素 | 估算 |
 |------|------|
-| 模型参数 | ~14.0M（3515 词表）/ ~10.8M（478 词表） |
+| 模型参数 | 13.5M（3515 词表）/ 10.4M（top-479 词表） |
 | 每 epoch 训练 | ~10-15min（batch_size=2，~5K 样本） |
 | 50 epoch | ~10-12h |
 | 早停可能提前 | ~30 epoch / ~6h |
