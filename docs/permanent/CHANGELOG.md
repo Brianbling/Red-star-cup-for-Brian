@@ -250,14 +250,24 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 
 ### 2026-07-31 — 数据扩展双线并行（isolated words + L1290 YOLO）
 
-#### 孤立词时序数据（agent: ac4ff5f）
+#### 孤立词时序数据（agent: ac4ff5f）【完成】
 - **新增 3 文件**：`src/extract_isolated_words.py`（MediaPipe IMAGE 模式 + normalize_hand 手腕归一化，输出 (T,84) float32）、`src/build_isolated_index.py`（clean_word(filename) 匹配 vocab_top478 word2idx）、`src/isolated_dataset.py`（IsolatedKeypointDataset + CombinedDataset 可混入 CE-CSL train）
 - **归一化对齐**：E:/CE-CSL 主数据是手腕归一化（middle_mcp norm==1.0 已验证），孤立词复用同一公式，保证特征分布一致
 - **中文路径**：cv2.VideoCapture 实测可直开真实中文文件名，仍内置 copy2→ASCII 临时目录回退防御
-- **进度**：basic 65/235 + common 10/863 提取中（~0.3 视频/s，全量 ~1h）。全量预计覆盖 vocab_top478 的 94 词（basic 48 + common 46）≈ 20%
-- **验证**：CombinedDataset(CE-CSL 4910 + 孤立词) DataLoader + collate_fn + SLRModel forward + CTC loss 全部通过
+- **性能**：单进程 ~0.3 视频/s → 8 workers 复用 landmarker ~1.1 视频/s（每视频重载模型慢 10 倍）
+- **最终产物**（主仓库 `isolated_words/`，gitignore 不跟踪）：basic 235 + common 863 = 1098 个 .npy（T 36-248，全部 dims={84} float32，0 错误）
+- **index.json：覆盖 87 个唯一 token，94 个匹配视频**（basic 48 + common 46，7 个 token 跨两数据集）
+- **验证**：CombinedDataset(CE-CSL 4910 + 孤立词 94) = 5004，DataLoader + collate_fn + SLRModel forward + CTC loss 全通过，activity_detect 可用（63→41 帧）
 
-#### L1290 YOLO 静态手势分类（agent: ab5817c，新启动）
-- **数据**：train 2148 + val 210 张 JPEG（640x480），35 个手势类（GBK 中文类名，0=时间/时候、24=谢谢、28=我、29=爱、34=介绍 等），YOLO 检测格式 `class cx cy w h`
+#### L1290 YOLO 静态手势分类（agent: ab5817c）
+- **数据完整性检查**：train 2148 图/2149 标签（含 1 个多余的 `classes.txt`，无对应图，YOLO 自动忽略）、val 210/211（同理）。图片与标签一一对应，无空标签/无目标图，全部标签格式合法（`class cx cy w h` 归一化坐标 0-1），35 类均有样本，train 每类 37-108 样本、val 每类 4-11 样本。原图 640x480
 - **任务**：l1290_data.yaml + train_l1290.py（yolov8s + pretrained）→ 训练 → 验证 mAP
-- **状态**：启动中，验证数据完整性
+- **重要坑（ultralytics 8.4.105）**：`YOLO("yolov8s.yaml").train(pretrained=True)` **不会真正加载 COCO 预训练权重**（yaml 构建的模型无 ckpt，bool pretrained 不触发 load_checkpoint，log 里无 "Transferred" 行）。必须传 `.pt` 文件：`YOLO("yolov8s.pt")` 才会加载。另外 GitHub 下载 SSL 证书验证失败（被墙/证书问题），需 `ssl.CERT_NONE` + urllib 手动下载 yolov8s.pt（22.6MB），AMP check 的 yolo26n.pt 下载同样失败但自动跳过不影响训练
+- **训练配置**：yolov8s + COCO 预训练（Transferred 349/355 items），imgsz=640，batch=16（GPU 3.5-4.0GB），epochs=100，workers=0（Windows），optimizer=auto→AdamW(lr=0.000256)
+- **进度（2026-07-31）**：训练运行中，~1.3 it/s，每 epoch ~100-110s + val
+  - Epoch 1：mAP50=0.973，mAP50-95=0.742，P=0.895，R=0.878
+  - Epoch 2：mAP50=0.983，mAP50-95=0.752，P=0.864，R=0.959
+  - loss 快速下降：box 1.40→1.01，cls 4.58→1.35，dfl 1.50→1.15（前 2 epoch）
+- **对比（弃用）**：首轮误用 yaml+pretrained=True 从随机初始化训了 7 epoch（box 1.43/cls 2.09/dfl 2.14，无 val），停掉改用正确预训练加载。随机初始化在小数据（2148 图）上收敛慢且 mAP 明显更差，COCO 预训练是关键
+- **输出**：`YOLOv8/runs/l1290/`（results.csv、weights/best.pt、last.pt），随机初始化痕迹在 `runs/l1290_random_init/`（可删）
+- **预计完成**：100 epochs × ~2min ≈ 3.5h（已跑 ~15min）
