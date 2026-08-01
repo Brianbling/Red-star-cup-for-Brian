@@ -355,3 +355,30 @@ P0 修复 + 手部归一化 + top-478 子词表后，训练 WER 始终 ~93-95%�
 - **预期上限**：~24pp 差距大头是表征鸿沟，蒸馏只能教对学生能表达的东西（对齐/切分/去误插），落点 ~60% 出头，别期待 40%
 - 作者团队蒸馏是成熟路线：2303.06820 cross-resolution KD（本地 kdloss 出处）、2402.19118 frame-level 自蒸馏、2207.00928 TSRNet
 - **待定**：teacher 词表 3515 vs student 子词表 479 的软标签对齐方式（student 升 3515 或 teacher 聚到子词表），动手时再定
+
+## 2026-08-01 — CSL-Daily 关键点接入 + 混合训练启动【进行中】
+
+### 四方向 agent 汇总（顺序执行：3 → 4 → 1 → 2）
+- **方向4 双 VAE 辅助损失【已实现】**：`src/model.py` 加 `SequenceVAE`（接 BiLSTM 输出逐帧重建 + KL），`src/train.py` 加 `--vae-loss/--vae-weight`（默认关，weight=0.01）。CPU 冒烟通过，默认行为逐位不变。VAE loss 量级 ~62 vs CTC ~3.5，weight 0.01 缩放后同量级
+- **方向1 TFNet teacher 权重【已分析】**：879MB checkpoint（epoch=38, dev 33.19，即 CSL-Daily→CE-CSL 微调版）。ResNet34MAM 双分支（时域 + FFT 频域）→ 2 层 BiLSTM(1024) → NormLinear(1024,3516=3515+blank)。词表与我们 99.9% 对齐（交集 3513，差标点+`２`）。加载：strict=True 全绿（22/44 分类头是别名副本需补进 sd）。**硬约束：单视频前向 ~830ms/1.46GB，只能离线缓存软标签**。90 帧窗口 teacher T'=23 vs 学生 T'=22 需插值。top-478 投影需边缘化 3037 词
+- **方向2 SLR 孤立词【已分析】**：`slr500_words_joints/` 是 125K 个 .body.txt（Kinect 全身 25 关节，与 84d 不兼容，**废弃**）。真 npy 在 `SLR_Dataset/keypoints/train/`：**24,770 个 (T,84)** 与 CE-CSL 逐点吻合，但**只覆盖类 000-110（111/500 词），抽取中断**，全量应 11 万。词表命中 top478 仅 14%。**暂缓**（需续抽 389 类 + 命中低）
+- **方向3 CSL-Daily【已接入】**：`E:/CSL-Daily/CSL-Daily/keypoints/` 20,653 个 (T,84) **是本项目 MediaPipe 管线抽的**（非 Kinect），与 CE-CSL 逐字节一致，frames_512x512 也完整。新增 `src/csldaily_dataset.py`（读 keypoints/{split} + labels.json，返回与 KeypointDataset 一致 dict，可复用 collate_fn/CombinedDataset）
+
+### 词表命中率分析（决定用全量 3515 而非 top-478）
+| 词表 | CSL-Daily token 命中 | 样本数 |
+|------|---------------------|--------|
+| top-478 子词表 | **65.6%** ❌ 唯一 token 命中仅 19.7% | 18315 |
+| **全量 3515** | **90.5%** ✅（唯一 token 66.8%） | ~18K |
+
+top-478 下 CSL-Daily 大量标签被静默丢弃（`_gloss_to_ids` 容错跳过），信号稀释严重；全量 3515 下命中 90.5%，且与 teacher 词表对齐（为蒸馏铺路）。**决定：混合训练用全量 3515 词表**。
+
+### train.py 接入
+- `--csldaily-base` 参数：非 None 时 CSL-Daily train 混入训练集（CombinedDataset），dev 保持 CE-CSL
+- 修复 `epochs = 100` 硬编码 → `args.epochs`（VAE agent 改动时遗漏，实际 `--epochs` 一直未生效）
+- 冒烟测试：CE-CSL 4910 + CSL-Daily 18315 = 23225 样本，DataLoader+collate+前向+CTC loss 全通过
+
+### 训练启动【进行中】
+- 命令：`train.py --vocab vocab.json --csldaily-base E:/CSL-Daily/CSL-Daily --activity-detect --vae-loss --visual-fusion none --checkpoint-dir checkpoints/csldaily_vae`
+- detached PowerShell 启动（PID 32732），日志 `logs/train_csldaily_vae.log`
+- Epoch 1 实测 ~27 it/s，11686 batch/epoch ≈ 7 分钟，100 epochs ≈ 11-12h
+- 假设：数据量 4.7 倍应显著降 WER（验证"数据量是唯一瓶颈"）；VAE loss 顺带验证论文 -2.7pp 是否复现

@@ -28,6 +28,8 @@ sys.path.insert(1, str(BASE_DIR / "TFNet-main"))
 from model import SLRModel
 from dataset import KeypointDataset, collate_fn, collate_fn_grouped
 from decode import ctc_decode_batch
+from csldaily_dataset import CSLDailyDataset
+from isolated_dataset import CombinedDataset
 
 
 def seed_torch(seed=0):
@@ -126,6 +128,12 @@ def main():
                              "use 'keypoints_normalized' for normalized data)")
     parser.add_argument("--epochs", type=int, default=100,
                         help="Max epochs (default 100; use 15 for quick experiments)")
+    parser.add_argument("--vae-loss", action="store_true", default=False,
+                        help="Enable VAE auxiliary loss on BiLSTM features (training-only reg)")
+    parser.add_argument("--vae-weight", type=float, default=0.01,
+                        help="Weight of VAE auxiliary loss (TFNet paper uses VAE+CTC, ~2.7pp)")
+    parser.add_argument("--csldaily-base", type=str, default=None,
+                        help="CSL-Daily base dir to mix into training set (None=CE-CSL only)")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -181,6 +189,16 @@ def main():
     )
     print(f"训练集: {len(train_set)} 样本, 验证集: {len(dev_set)} 样本")
 
+    if args.csldaily_base:
+        csldaily_train = CSLDailyDataset(
+            Path(args.csldaily_base), "train", word2idx,
+            activity_detect=args.activity_detect,
+            min_active_frames=args.min_active_frames,
+            gap_frames=args.gap_frames,
+        )
+        train_set = CombinedDataset(train_set, csldaily_train)
+        print(f"  CSL-Daily 混入训练: +{len(csldaily_train)} 样本, 总计 {len(train_set)}")
+
     if args.activity_detect:
         trimmed_train = sum(1 for i in range(len(train_set))
                             if train_set[i]["trimmed"])
@@ -220,8 +238,9 @@ def main():
     input_dim = 84 if no_visual else 660
     model = SLRModel(vocab_size=vocab_size, input_dim=input_dim,
                      visual_fusion=args.visual_fusion,
-                     blank_bias=args.blank_bias).to(device)
+                     blank_bias=args.blank_bias, vae=args.vae_loss).to(device)
     print(f"参数量: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"VAE 辅助损失: {args.vae_loss} (weight={args.vae_weight})")
 
     diag = compute_diagnostics(model, dev_loader, device, blank, beam_width)
     print(f"初始化诊断: P(blank)={diag['p_blank']:.3f}, "
@@ -240,14 +259,17 @@ def main():
     blank_threshold = 0.55
     entropy_weight = 0.01
 
-    epochs = 100
+    epochs = args.epochs
     best_wer = float("inf")
     patience_counter = 0
     patience = 15
 
     def train_step(video, input_lengths, label, target_lengths):
         with torch.autocast("cuda", enabled=args.amp):
-            log_probs = model(video, input_lengths)
+            if args.vae_loss:
+                log_probs, vae_loss = model(video, input_lengths, return_vae_loss=True)
+            else:
+                log_probs = model(video, input_lengths)
             # Only penalize blank on valid (non-padded) frames
             ctc_input_lengths = (input_lengths // 4).clamp(min=1)
             ctc_loss = ctc_loss_fn(log_probs, label, ctc_input_lengths, target_lengths)
@@ -261,6 +283,8 @@ def main():
             entropy = -(probs * log_probs).sum(dim=-1).mean()
 
             loss = ctc_loss + blank_penalty_weight * blank_penalty + entropy_weight * entropy
+            if args.vae_loss:
+                loss = loss + args.vae_weight * vae_loss
 
         if torch.isinf(loss) or torch.isnan(loss):
             return None
@@ -277,8 +301,11 @@ def main():
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
-        return {"ctc": ctc_loss.item(), "bp": blank_penalty.item(),
-                "entropy": entropy.item(), "total": loss.item()}
+        result = {"ctc": ctc_loss.item(), "bp": blank_penalty.item(),
+                  "entropy": entropy.item(), "total": loss.item()}
+        if args.vae_loss:
+            result["vae"] = vae_loss.item()
+        return result
 
     for epoch in range(epochs):
         model.train()
@@ -308,9 +335,15 @@ def main():
         avg_bp = np.mean([l["bp"] for l in losses])
         avg_entropy = np.mean([l["entropy"] for l in losses])
         avg_total = np.mean([l["total"] for l in losses])
-        print(f"Epoch {epoch+1}: ctc={avg_ctc:.4f}, bp={avg_bp:.4f}, "
-              f"ent={avg_entropy:.4f}, total={avg_total:.4f}, "
-              f"lr={optimizer.param_groups[0]['lr']:.6f}")
+        if args.vae_loss:
+            avg_vae = np.mean([l["vae"] for l in losses])
+            print(f"Epoch {epoch+1}: ctc={avg_ctc:.4f}, bp={avg_bp:.4f}, "
+                  f"ent={avg_entropy:.4f}, vae={avg_vae:.4f}, total={avg_total:.4f}, "
+                  f"lr={optimizer.param_groups[0]['lr']:.6f}")
+        else:
+            print(f"Epoch {epoch+1}: ctc={avg_ctc:.4f}, bp={avg_bp:.4f}, "
+                  f"ent={avg_entropy:.4f}, total={avg_total:.4f}, "
+                  f"lr={optimizer.param_groups[0]['lr']:.6f}")
 
         model.eval()
         all_pred_texts = []

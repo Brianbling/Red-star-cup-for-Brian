@@ -11,10 +11,41 @@ import torch
 import torch.nn as nn
 
 
+class SequenceVAE(nn.Module):
+    """轻量 VAE 辅助头：逐帧对 BiLSTM 序列特征做重建正则（β-VAE 风格）。
+
+    训练时辅助 CTC，推理时不参与，零额外开销。
+    """
+    def __init__(self, input_dim, hidden_dim=256, latent_dim=64):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+        )
+        self.mu_head = nn.Linear(hidden_dim, latent_dim)
+        self.log_var_head = nn.Linear(hidden_dim, latent_dim)
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, input_dim),
+        )
+
+    def forward(self, x):
+        h = self.encoder(x)
+        mu = self.mu_head(h)
+        log_var = self.log_var_head(h)
+        std = torch.exp(0.5 * log_var)
+        z = mu + torch.randn_like(std) * std
+        recon = self.decoder(z)
+        return recon, mu, log_var
+
+
 class SLRModel(nn.Module):
     def __init__(self, vocab_size, input_dim=660, conv_dim=256, hidden_size=512,
                  num_layers=2, dropout=0.3, visual_fusion="raw",
-                 kp_dim=84, vis_dim=576, fusion_dim=128, blank_bias=5.32):
+                 kp_dim=84, vis_dim=576, fusion_dim=128, blank_bias=5.32,
+                 vae=False, vae_latent_dim=64):
         super().__init__()
         self.visual_fusion = visual_fusion
 
@@ -47,7 +78,9 @@ class SLRModel(nn.Module):
         self.fc.bias.data[0] = blank_bias
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
-    def forward(self, x, input_lengths):
+        self.vae = SequenceVAE(hidden_size * 2, latent_dim=vae_latent_dim) if vae else None
+
+    def forward(self, x, input_lengths, return_features=False, return_vae_loss=False):
         if self.visual_fusion == "projected":
             kp = x[:, :, :84]
             vis = x[:, :, 84:]
@@ -69,4 +102,18 @@ class SLRModel(nn.Module):
         lstm_out, _ = nn.utils.rnn.pad_packed_sequence(lstm_out)
 
         logits = self.fc(lstm_out)
-        return self.log_softmax(logits)
+        log_probs = self.log_softmax(logits)
+
+        vae_loss = None
+        if return_vae_loss and self.vae is not None:
+            recon, mu, log_var = self.vae(lstm_out)
+            valid_mask = torch.arange(lstm_out.shape[0], device=lstm_out.device).unsqueeze(1) < input_lengths.unsqueeze(0)
+            recon_err = ((recon - lstm_out) ** 2).sum(dim=-1)[valid_mask].mean()
+            kl = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())[valid_mask].sum(dim=-1).mean()
+            vae_loss = recon_err + kl
+
+        if return_features:
+            return log_probs, lstm_out
+        if return_vae_loss:
+            return log_probs, vae_loss
+        return log_probs
