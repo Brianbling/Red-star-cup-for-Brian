@@ -382,3 +382,23 @@ top-478 下 CSL-Daily 大量标签被静默丢弃（`_gloss_to_ids` 容错跳过
 - detached PowerShell 启动（PID 32732），日志 `logs/train_csldaily_vae.log`
 - Epoch 1 实测 ~27 it/s，11686 batch/epoch ≈ 7 分钟，100 epochs ≈ 11-12h
 - 假设：数据量 4.7 倍应显著降 WER（验证"数据量是唯一瓶颈"）；VAE loss 顺带验证论文 -2.7pp 是否复现
+
+### 2026-08-01 夜 — 三路诊断：4.7 倍数据为何收效甚微【Epoch 70, best 66.76%】
+
+**现象**：混合训练到 Epoch ~69 best WER 66.76%，与 baseline 66.58% 几乎持平（collapse 31.2%→2.7% 大幅改善，但 D 41.8%→46.4% 退步）。4.7 倍样本几乎没换来 WER 下降。
+
+**三路 CPU 诊断 agent 结论（不占 GPU）**：
+
+1. **域偏移（A3）**：两数据集坐标量纲、运动能量完全一致，**唯一显著偏移是缺手率 CE 30.1% vs CSL-Daily 2.55%（12x）**。CSL-Daily 干净帧主导梯度，稀释 CE 学"无手帧→blank"的能力 → 解释了 D 退步。帧长反向（CE 183 vs DL 120）。**可管理偏移**，建议混入比例下调或对 CE 缺手帧加权
+2. **OOV 映射（A1）**：CSL-Daily 663 个 OOV 词占 9.5% token，被 `_gloss_to_ids` 静默丢弃成负信号。分类：A 可分解 21.5%（组合词如"好了"）、B 近匹配仅 1.0%、**C 真新词 77.4%**（516 词，count≥10 有 297 词可并入词表回收 61% token，3515→3812 仅 +2.25% 参数，但样本稀疏易欠训）
+3. **低频词覆盖（A2）**：dev 250 个 CSL-Daily 未覆盖瓶颈词（占 22.4% token），其中 132 个 train 出现 ≤3 次。数据源覆盖：**isolated_words 数据全在但索引不全**（见下）、SLR 已提取 190 类补 9 词、SLR 定向 10 类补 10 词
+
+**关键发现：isolated_words 索引缺口**——`isolated_words/keypoints/` 实际有 **1057 词 npy**（basic 235 + common 863 全量，Phase 5 已全提取），但 `index.json` 只收录 **87 token**，**167 个在词表内的词从未被训练使用**（含 dev 8 个 ≤3 次最难词：信任/停车/圣诞节/挫折/明年/星期六/星期日/疼）。
+
+### 2026-08-01 夜 — E3 孤立词数据解锁【完成】
+
+- **重建 `isolated_words/index.json`**：87 → **254 token，271 样本**（167 新增），质量验证通过（帧长 36-139 全正常），无旧 token 丢失
+- 覆盖 dev 瓶颈词 **23/235**（含 8 个 ≤3 次最难词），另 75 个词与 CSL-Daily 覆盖重合
+- **`src/train.py` 加 `--isolated-index` 参数**：非 None 时 `IsolatedKeypointDataset` 混入训练集（CombinedDataset），冒烟测试 CE-CSL 4972 + CSL-Daily 18400 + isolated 271 = 23643 样本通过
+- 提交 08d73ca（worktree 分支）
+- **下一步（GPU 实验清单）**：E1 OOV 词表扩展重训（3515→3812 并 C 类 297 词）、E2 混入比例下调（缺手率域偏移修正）、E3 已完成、E4 SLR 定向 10 类（公务员/天文/就业/按钮/眼 等 5 个 ≤3 次词）
