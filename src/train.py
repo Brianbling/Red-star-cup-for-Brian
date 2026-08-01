@@ -29,7 +29,7 @@ from model import SLRModel
 from dataset import KeypointDataset, collate_fn, collate_fn_grouped
 from decode import ctc_decode_batch
 from csldaily_dataset import CSLDailyDataset
-from isolated_dataset import CombinedDataset
+from isolated_dataset import CombinedDataset, IsolatedKeypointDataset
 
 
 def seed_torch(seed=0):
@@ -134,6 +134,9 @@ def main():
                         help="Weight of VAE auxiliary loss (TFNet paper uses VAE+CTC, ~2.7pp)")
     parser.add_argument("--csldaily-base", type=str, default=None,
                         help="CSL-Daily base dir to mix into training set (None=CE-CSL only)")
+    parser.add_argument("--isolated-index", type=str, default=None,
+                        help="isolated_words/index.json path to mix isolated word samples into training "
+                             "(None=skip isolated words)")
     args = parser.parse_args()
 
     seed_torch(0)
@@ -198,6 +201,16 @@ def main():
         )
         train_set = CombinedDataset(train_set, csldaily_train)
         print(f"  CSL-Daily 混入训练: +{len(csldaily_train)} 样本, 总计 {len(train_set)}")
+
+    if args.isolated_index:
+        iso_set = IsolatedKeypointDataset(
+            Path(args.isolated_index), word2idx,
+            activity_detect=args.activity_detect,
+            min_active_frames=args.min_active_frames,
+            gap_frames=args.gap_frames,
+        )
+        train_set = CombinedDataset(train_set, iso_set)
+        print(f"  孤立词混入训练: +{len(iso_set)} 样本, 总计 {len(train_set)}")
 
     if args.activity_detect:
         trimmed_train = sum(1 for i in range(len(train_set))
