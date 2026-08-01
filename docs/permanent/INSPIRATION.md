@@ -386,3 +386,10 @@ v2+: attention rescoring (#13) 对 nbest 做重排序
 - **修复**：改用 `YOLO("yolov8s.pt")` 重训，100 epochs 后 mAP50=0.985（epoch 18）；首轮随机初始化痕迹保留在 `runs/l1290_random_init/`（可删）
 - **教训**：ultralytics 的 pretrained 语义因传入对象而异——传 yaml=忽略，传 .pt=加载。新会话别踩
 
+### LL-6: 数据量翻倍 ≠ 词汇覆盖提升（CSL-Daily 混合训练教训）
+- **日期**：2026-08-02
+- **问题**：混入 CSL-Daily 18,400 连续句（数据量 4.7 倍），WER 66.58%→66.76% 几乎持平
+- **根因**：CTC 模型 WER 瓶颈是**评估目标词汇的有效监督量**，不是总样本数。CSL-Daily 在词表内的 1337 词**全被 CE-CSL 覆盖（0 个新词）**；663 个 OOV 词占 9.5% token 被 `_gloss_to_ids` 静默丢弃成"这段手势→blank"负信号；dev 22.4% token 是 train 出现≤3 次的低频词，CSL-Daily 帮不上。另有缺手率域偏移（CE 30.1% vs CSL-Daily 2.55%），CSL-Daily 干净帧稀释 CE 学"无手→blank"
+- **教训**：**扩展数据前先查词汇覆盖，别只看样本数**。两个数据集词汇重叠度高时，样本翻倍对 WER 无益；要补 dev 评估目标里 train 覆盖不到的低频词。同类场景先做三路诊断：① OOV 映射分析（负信号）② dev 瓶颈词覆盖分析 ③ 域偏移量化
+- **修复**：孤立词索引缺口（1057 npy 只收 87 token，167 个在词表内的词从未被训练用）→ 重建 index.json 到 254 token，train.py 加 `--isolated-index`
+
