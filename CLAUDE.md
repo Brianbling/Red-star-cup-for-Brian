@@ -68,19 +68,21 @@ D:/red star project/
 │   ├── extract_isolated_words.py   # 孤立词关键点提取（手腕归一化）
 │   ├── build_isolated_index.py     # 孤立词→vocab 匹配索引
 │   ├── isolated_dataset.py         # 孤立词数据集 + CombinedDataset
+│   ├── csldaily_dataset.py         # CSL-Daily 数据集（读 keypoints + labels.json，可混入训练）
 │   ├── visual_backbone.py    # 视觉 backbone（MobileNetV3 封装，实验用）
 │   ├── video_dataset.py      # 视频数据集（视觉实验用）
 │   ├── model_visual.py       # 视觉融合模型（实验用）
 │   └── train_visual.py       # 视觉实验训练脚本（实验用）
 ├── TFNet-main/               # 原 TFNet，仅复用 WER.py（其余均独立实现）
-├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练）
+├── CE-CSL/CE-CSL/            # 中国手语连续句子数据集（主路时序模型训练，数据实际在 E:/CE-CSL/CE-CSL）
 │   ├── video/{train,dev,test}/  # ~6000 条视频 (.mp4)，train-01418 缺失
 │   ├── label/{train,dev,test}.csv
 │   └── keypoints/{train,dev,test}/  # 预处理关键点缓存 (.npy)，5987 文件
 ├── CSL_basic_dataset/         # 中国手语基础词，235 mp4
 ├── CSL_common_dataset/        # 中国手语常用词，863 mp4
-├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续（含 keypoints/ 缓存）
-├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化），1098 .npy + index.json（87 token / 94 匹配视频），gitignore 不跟踪
+├── CSL-Daily/                 # 中国手语连续句数据集（20,653 关键点 npy，本项目 MediaPipe 提取），实际在 E:/CSL-Daily/CSL-Daily
+├── SLR_Dataset/               # CSL-2015，25K 孤立词 + 100 句连续（含 keypoints/ 缓存，仅 000-189 类已提取）
+├── isolated_words/           # 孤立词关键点提取缓存（basic/common，手腕归一化），1057 npy + index.json（254 token / 271 样本），gitignore 不跟踪
 ├── YOLOv8/                   # YOLOv8，含 l1290_data.yaml + train_l1290.py；L1290 权重在 runs/l1290/weights/best.pt
 ├── ASL Alphabet/             # 美式手语字母数据集（尚未下载，需使用时再获取）
 ├── L1290/                    # C382 手势手语数据（35 类，2148 训练图，YOLO 检测格式）
@@ -239,6 +241,12 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 - 已交付的数据扩展：孤立词 1098 .npy + index.json（94 匹配视频，CombinedDataset 已实现可混入 CE-CSL train）；L1290 YOLO 旁路权重（mAP50=0.985）
 - 下一步（`docs/temporary/实验方案.md`，主仓库未跟踪）：SLR 25K 孤立词预训练 + CSL-Daily 20K 数据扩展
 
+**2026-08-02 数据扩展实验更新（进行中）**：
+- **CSL-Daily 混合训练**：`--csldaily-base E:/CSL-Daily/CSL-Daily` 混入 18,400 连续句，数据量 4.7 倍，best WER **66.76%**（Epoch 69）——与 baseline 66.58% 几乎持平
+- **三路诊断修正了"数据量是唯一瓶颈"结论**：真实瓶颈是三层叠加——① 词汇天花板（CSL-Daily 663 个 OOV 词占 9.5% token 被静默丢弃成负信号；dev 22.4% token 是 train 低频词）、② 缺手率域偏移（CE 30.1% vs CSL-Daily 2.55%，CSL-Daily 干净帧稀释 CE 的"无手→blank"能力）、③ 孤立词索引缺口（isolated_words 1057 npy 但 index.json 只收 87 token，167 个在词表内的词从未被训练使用）
+- **孤立词索引已修复**（index.json 87→254 token / 271 样本）+ train.py 加 `--isolated-index` 参数
+- **新训进行中**（PID 50848，`checkpoints/csldaily_iso/`）：旧配置 + `--isolated-index`，早期曲线每 epoch 比旧训快 ~2pp，待看后期能否跌破 66.58%
+
 ## 工作流治理（防幻觉与决策一致性）
 
 ### 1. 权威文档层级
@@ -291,6 +299,10 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | Beam Search (CTC Prefix) | "beam search 比贪心好 5-8pp" | WER 0pp 变化。模型 P(blank)≈0.77，概率分布过于尖锐，无备选路径可探索。beam search 只在模型足够"犹豫"时有价值 |
 | blank_bias=5.32 | "初始化给 blank 正 bias 不合理" | 不给正 bias（bias=0）时 P(blank) 从 0→1.0 仅需 1 epoch。bias=5.32 是正确初始化，不是 hack。CTC 需要 blank 做分隔符，bias 控制初始 P(blank) ≈ σ(5.32)≈0.995 |
 | 数据瓶颈 | "改进训练/解码策略就能突破 WER" | 三项零成本优化均退步或不改善。~5K 数据量是 WER 天花板（66.58%），突破需要更多数据或预训练，非工程优化 |
+| 数据量翻倍 = WER 提升 | "4.7 倍数据（CSL-Daily 混合）应显著降 WER" | 实测 66.58%→66.76% 几乎持平。**瓶颈是词汇覆盖 + 缺手率域偏移，不是样本数**：CSL-Daily 在词表内的 1337 词全被 CE-CSL 覆盖（0 个新词），663 个 OOV 词占 9.5% token 被静默丢成负信号；dev 22.4% token 是 train 低频词（CSL-Daily 帮不上）|
+| CSL-Daily OOV 静默丢弃 | "`_gloss_to_ids` 查不到就跳过，无害" | 标签被丢但手势帧还在，模型被教成"这段手势→blank"（负信号）。663 个 OOV 词占 9.5% token |
+| 缺手率域偏移 | "两个数据集同管线提取，分布一致" | 唯一显著偏移是缺手率：CE 30.1% vs CSL-Daily 2.55%（12x）。CSL-Daily 干净帧主导梯度，稀释 CE 学"无手→blank"，混合训练后 D 从 41.8%→46.4% 退步 |
+| isolated_words 索引 | "isolated_words 只覆盖 87 词，数据不全" | **数据全在**（1057 npy：basic 235 + common 863 全量），但 index.json 只收 87 token，**167 个在词表内的词从未被训练使用**（含 dev 8 个 ≤3 次最难词）。2026-08-02 已重建 index.json（254 token / 271 样本）。新会话别再说"孤立词只有 87 词" |
 | L1290 YOLO 是时序模型 | "L1290 是手势时序分类，与主路同思路" | L1290 是 **YOLO 静态手势检测/分类**（35 类，2148 图），训练产物是旁路静态词权重 `YOLOv8/runs/l1290/weights/best.pt`（mAP50=0.985），与主路 BiLSTM+CTC 完全独立 |
 | YOLO 预训练加载 | "`YOLO('yolov8s.yaml').train(pretrained=True)` 会加载 COCO 权重" | **不会**。yaml 构建的模型无 ckpt，bool pretrained 不触发 load_checkpoint（log 无 "Transferred" 行）。必须 `YOLO("yolov8s.pt")`。GitHub 下载 SSL 失败需 `ssl.CERT_NONE` + urllib 手动下载 |
 
