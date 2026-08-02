@@ -287,3 +287,16 @@ requirements.txt     # + fastapi uvicorn websockets（新增依赖）
 - **上行**：`WS /ws/recog`，客户端发 `{type:"frame", data:"data:image/jpeg;base64,...", ts:...}`
 - **下行**：`{type:"static_word", word:"你好", conf:0.92, ts:...}`（S2 再加 `{type:"sentence", text:"...", ts:...}`）
 - YOLO 防抖：同类别连续 ≥N 帧才输出（防抖参数在 config.yaml）
+
+## 平板/局域网访问（S1 已实现）
+
+**核心约束**：`getUserMedia` 摄像头要求 **secure context**（HTTPS 或 localhost）。平板经局域网 `http://192.168.x.x:8000` 访问会被浏览器拦截摄像头。**唯一可用路径是 HTTPS**（自签证书，平板接受证书警告后可用）。
+
+- **访问方式**：平板浏览器打开 `https://<局域网IP>:8000`（当前 `192.168.1.8`），接受自签证书警告 → 启动摄像头即测
+- **证书**：`certs/cert.pem + key.pem`（自签，365 天），`backend/main.py` 检测存在即启用 HTTPS + 绑定 `0.0.0.0`；`start_server.py` 一键生成证书 + 启动
+- **前端 WS 自适应**：`app.js` 按页面协议选 WS URL——页面 https → `wss://location.host`，否则 `ws://`（保证 wss 与 https 同源，避免 mixed-content 拦截）
+- **前后端同源部署**：FastAPI 同时服务 `/`（静态页）和 `/ws/recog`（WS），避免跨源
+
+**已确认的 L1290 权重性质**：yolov8s **检测**模型（task=detect，35 类），`infer()` 取整帧最高置信度框 class_id 映射类名（`YOLOv8/l1290_data.yaml` names）。类名如"时间/时候""你/您/你的/这"（一词多义以 / 分隔）。
+
+**服务启停规范**：停服务必须用**精确 PID**（`Stop-Process -Id <pid>`），**禁止** `taskkill //F //IM python.exe` 按进程名全杀（2026-08-02 事故：误杀 CSL-Daily 训练进程）。查 PID：`Get-CimInstance Win32_Process -Filter "Name='python.exe'"`。

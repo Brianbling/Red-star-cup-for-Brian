@@ -428,3 +428,41 @@ top-478 下 CSL-Daily 大量标签被静默丢弃（`_gloss_to_ids` 容错跳过
 **依赖**：fastapi / uvicorn / websockets 需新增（当前 yolov8 环境未装），补 requirements.txt。
 **权重路径**：YOLO 权重实际在 worktree `.../exp+zero-cost-optimization/YOLOv8/runs/l1290/weights/best.pt`（主仓库该路径不存在，CLAUDE.md 已注明）。
 **待确认**：摄像头在浏览器端（推荐）还是后端 cv2 直读；静态词先用 35 类还是等 SLR 完整词表。
+
+### 2026-08-02 — S1 Web 系统落地【完成 + 平板适配进行中】
+
+#### S1 前后端搭建【完成】
+
+按"前端 UI agent + 后端推理 agent"分工（用户要求多 agent 并行）搭建完成，端到端验证通过：
+
+**后端**（`backend/main.py` + `inference/static_yolo.py`）：
+- **确认 L1290 是 yolov8s 检测模型**（task=detect，35 类，非分类），`infer()` 取整帧最高置信度检测框 class_id → 类名（从 `YOLOv8/l1290_data.yaml` names 读，如"时间/时候/你/您"）
+- 防抖：同类别连续 ≥15 帧 + 置信度 ≥0.5 才输出词；WS 无帧超时 2s 重置防抖状态
+- 推理跑独立 daemon 线程（queue.Queue 通道），WS 事件循环不阻塞（修复了 `queue.get` 直接放协程导致 WS 握手超时的 bug）
+- `/health` 返回 `{"status":"ok","model_loaded":true,"classes":35}`，单帧推理 ~17ms GPU
+- **注意**：后端 agent 验证时误用 `taskkill //F //IM python.exe` 按进程名全杀，连带杀掉了 CSL-Daily 训练进程（PID 50848，Epoch 87/100 中断，best 64.24% 已存档）。**教训：停服务必须用精确 PID，禁止按进程名全杀**（详见下方 Landmine）
+
+**前端**（`frontend/index.html` + `app.js`）：getUserMedia 采集 → Canvas 480p + JPEG q0.6 → 10fps WS 上行；深色主题、中文 UI、词卡片（最近 5 个 + 置信度 + 时间戳）、状态灯（连接/识别/置信度）、丢帧统计（用 ws.bufferedAmount 积压估算，因后端无逐帧 ack）
+
+**依赖**：requirements.txt 追加 `fastapi>=0.140`、`uvicorn>=0.52`、`websockets>=16.0`（已装入 yolov8 环境：0.141.1/0.52.1/16.1.1）
+
+**验证**：`/health` 通过；WS 端到端收到 `{"type":"static_word","word":"时间/时候","conf":0.923}`；GET / 返回 index.html。
+
+#### 训练进程被误杀【事故 + 决策待定】
+
+- S1 验证重启服务器时 `taskkill //F //IM python.exe` 全杀，误杀 CSL-Daily 混合训练（PID 50848）
+- 中断于 Epoch 87/100，`best.pt` = **64.24%**（Epoch 81 存档，完整）。Epoch 87 本身 wer=64.24% 平 best 且 **D=40.3% 历史最低**，说明还有下降空间
+- train.py 无 `--resume`，续跑需从头（~14h/100epoch）。等待用户决策：接受 64.24% / 修复 bug 后重训 / 等代码审查出结果再定
+
+#### 平板适配【进行中，多 agent 分工】
+
+用户要**平板直接测试**。核心障碍：getUserMedia 要求 secure context，平板经 `http://192.168.1.8:8000`（局域网 WLAN IP）访问会被浏览器拦截摄像头 → **必须 HTTPS**（自签证书，平板接受警告后可用）。
+
+Workflow（w7p1lwu5x，3 agent 分工）：
+- 后端 agent：生成自签证书 `certs/`，main() 检测证书存在即 HTTPS + 绑定 0.0.0.0，写 start_server.py 一键启动，停旧服务（精确 PID 13396）后重启 HTTPS
+- 前端 agent：平板触屏适配（大按钮/大字号、@media 响应式横竖屏、https 提示条、全屏按钮）
+- 验证 agent：curl -k 验证 /health + wss 推帧端到端
+
+前端已改：`app.js` WS URL 自适应（页面 https → `wss://location.host`，否则 `ws://`）。
+
+**平板访问路径**：平板浏览器打开 `https://192.168.1.8:8000` → 接受证书警告 → 启动摄像头即测。

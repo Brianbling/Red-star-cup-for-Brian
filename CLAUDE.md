@@ -311,6 +311,8 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | isolated_words 索引 | "isolated_words 只覆盖 87 词，数据不全" | **数据全在**（1057 npy：basic 235 + common 863 全量），但 index.json 只收 87 token，**167 个在词表内的词从未被训练使用**（含 dev 8 个 ≤3 次最难词）。2026-08-02 已重建 index.json（254 token / 271 样本）。新会话别再说"孤立词只有 87 词" |
 | L1290 YOLO 是时序模型 | "L1290 是手势时序分类，与主路同思路" | L1290 是 **YOLO 静态手势检测/分类**（35 类，2148 图），训练产物是旁路静态词权重 `YOLOv8/runs/l1290/weights/best.pt`（mAP50=0.985），与主路 BiLSTM+CTC 完全独立 |
 | YOLO 预训练加载 | "`YOLO('yolov8s.yaml').train(pretrained=True)` 会加载 COCO 权重" | **不会**。yaml 构建的模型无 ckpt，bool pretrained 不触发 load_checkpoint（log 无 "Transferred" 行）。必须 `YOLO("yolov8s.pt")`。GitHub 下载 SSL 失败需 `ssl.CERT_NONE` + urllib 手动下载 |
+| 停服务/杀进程 | "重启服务用 `taskkill //F //IM python.exe` 全杀很省事" | **禁止按进程名全杀**（`//IM`/`taskkill python.exe`/`pkill`）。会连带杀掉同名的模型训练进程（2026-08-02 事故：S1 验证时误杀 CSL-Daily 训练 PID 50848，Epoch 87/100 中断）。停服务必须用**精确 PID**（`Stop-Process -Id <pid>` / `taskkill //F //PID <pid>`），先 `Get-CimInstance Win32_Process` 查准 PID 再杀 |
+| 平板/局域网摄像头 | "平板连 `http://192.168.x.x:8000` 就能用摄像头" | getUserMedia 要求 **secure context**（HTTPS 或 localhost），局域网 http 会被浏览器拦截摄像头。必须 HTTPS（自签证书，平板接受警告）。S1 用 `https://192.168.1.8:8000` |
 
 ### 4. 编辑约束
 
