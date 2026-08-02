@@ -49,6 +49,34 @@ def compute_wer(pred_texts, label_texts):
     return WerList(hypotheses=hypotheses, references=references)
 
 
+def _eval_loop(model, loader, device, blank, beam_width, idx2word, amp):
+    """在给定 loader 上跑一遍前向 + CTC 解码，返回 pred_texts / label_texts。"""
+    model.eval()
+    all_pred_texts = []
+    all_label_texts = []
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Evaluating"):
+            video = batch["video"].to(device)
+            input_lengths = batch["input_lengths"].to(device)
+            label = batch["label"]
+            target_lengths = batch["target_lengths"]
+
+            with torch.autocast("cuda", enabled=amp):
+                log_probs = model(video, input_lengths)
+
+            pred_tokens = ctc_decode_batch(log_probs, blank, beam_width)
+            for b in range(video.shape[1]):
+                bt = pred_tokens[b].tolist()
+                pred_text = [idx2word[int(t)] for t in bt if int(t) < len(idx2word)]
+                label_start = sum(target_lengths[:b])
+                label_end = label_start + target_lengths[b]
+                label_tokens = label[label_start:label_end].tolist()
+                label_text = [idx2word[t] for t in label_tokens]
+                all_pred_texts.append(pred_text)
+                all_label_texts.append(label_text)
+    return all_pred_texts, all_label_texts
+
+
 def compute_diagnostics(model, dataloader, device, blank=0, beam_width=0):
     """Per-sample blank ratio and zero_pred rate on valid frames."""
     model.eval()
@@ -247,6 +275,23 @@ def main():
         dev_set, batch_size=1, shuffle=False,
         num_workers=1, pin_memory=True, collate_fn=collate_fn,
     )
+    # 原始帧 dev 评估 loader：不裁剪（activity_detect=False），用于报告 raw-frame WER。
+    # 训练评估/早停均基于该口径（与 TFNet 未裁剪全视频对齐）；args.activity_detect 只作用于训练侧。
+    dev_raw_loader = None
+    if args.activity_detect:
+        dev_raw_set = KeypointDataset(
+            KEYPOINT_BASE, "dev", word2idx,
+            activity_detect=False,
+            visual_only=args.visual_only,
+            no_visual=no_visual,
+            augment=False,
+            keypoint_subdir=args.keypoint_subdir,
+        )
+        dev_raw_loader = DataLoader(
+            dev_raw_set, batch_size=1, shuffle=False,
+            num_workers=1, pin_memory=True, collate_fn=collate_fn,
+        )
+        print(f"  raw-frame dev 评估: {len(dev_raw_set)} 样本（不裁剪）")
 
     input_dim = 84 if no_visual else 660
     model = SLRModel(vocab_size=vocab_size, input_dim=input_dim,
@@ -359,33 +404,26 @@ def main():
                   f"lr={optimizer.param_groups[0]['lr']:.6f}")
 
         model.eval()
-        all_pred_texts = []
-        all_label_texts = []
-
-        with torch.no_grad():
-            for batch in tqdm(dev_loader, desc="Validating"):
-                video = batch["video"].to(device)
-                input_lengths = batch["input_lengths"].to(device)
-                label = batch["label"]
-                target_lengths = batch["target_lengths"]
-
-                with torch.autocast("cuda", enabled=args.amp):
-                    log_probs = model(video, input_lengths)
-
-                pred_tokens = ctc_decode_batch(log_probs, blank, beam_width)
-                for b in range(video.shape[1]):
-                    bt = pred_tokens[b].tolist()
-                    pred_text = [idx2word[int(t)] for t in bt if int(t) < len(idx2word)]
-                    label_start = sum(target_lengths[:b])
-                    label_end = label_start + target_lengths[b]
-                    label_tokens = label[label_start:label_end].tolist()
-                    label_text = [idx2word[t] for t in label_tokens]
-                    all_pred_texts.append(pred_text)
-                    all_label_texts.append(label_text)
+        all_pred_texts, all_label_texts = _eval_loop(
+            model, dev_loader, device, blank, beam_width, idx2word, args.amp)
 
         wer_result = compute_wer(all_pred_texts, all_label_texts)
         wer = wer_result["wer"]
-        scheduler.step(wer)
+
+        # raw-frame WER：dev 不裁剪（activity_detect=False），与 TFNet 未裁剪口径对齐
+        raw_wer = None
+        if dev_raw_loader is not None:
+            raw_pred, raw_label = _eval_loop(
+                model, dev_raw_loader, device, blank, beam_width, idx2word, args.amp)
+            raw_result = compute_wer(raw_pred, raw_label)
+            raw_wer = raw_result["wer"]
+            print(f"  raw-frame WER: {raw_wer:.2f}% "
+                  f"(S={raw_result['sub_rate']:.1f}% D={raw_result['del_rate']:.1f}% "
+                  f"I={raw_result['ins_rate']:.1f}%)")
+
+        # 训练评估口径 = raw-frame WER（裁剪 dev 的数字另存，不用于调度/早停/选 best）
+        best_metric = raw_wer if raw_wer is not None else wer
+        scheduler.step(best_metric)
 
         diag = compute_diagnostics(model, dev_loader, device, blank, beam_width)
         zero_pred = sum(1 for p in all_pred_texts if len(p) == 0)
@@ -399,7 +437,8 @@ def main():
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
-            "wer": wer,
+            "wer": best_metric,
+            "wer_trimmed": wer,
             "vocab_size": vocab_size,
             "idx2word": idx2word,
             "word2idx": word2idx,
@@ -407,11 +446,11 @@ def main():
 
         torch.save(checkpoint, checkpoint_dir / "last.pt")
 
-        if wer < best_wer:
-            best_wer = wer
+        if best_metric < best_wer:
+            best_wer = best_metric
             patience_counter = 0
             torch.save(checkpoint, checkpoint_dir / "best.pt")
-            print(f"  [NEW BEST] wer={wer:.2f}% → best.pt")
+            print(f"  [NEW BEST] wer={best_metric:.2f}% → best.pt")
         else:
             patience_counter += 1
 
