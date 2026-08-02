@@ -231,6 +231,22 @@ def run_ce_csl(args, landmarker):
     print(f"\n{split} done: {processed} processed, {skipped} skipped, {errors} errors")
 
 
+def _slr_worker(item, out_dir, model_path):
+    """Process a single SLR frame sequence (worker function for multiprocessing).
+    item = (vpath, word_idx, word)
+    """
+    vpath, word_idx, _word = item
+    video_id = f"{word_idx}_{Path(vpath).stem}"
+    save_path = out_dir / f"{video_id}.npy"
+    if save_path.exists():
+        return video_id, 0, True, True  # skipped
+
+    landmarker = create_landmarker(model_path)
+    n_frames, ok = process_frame_sequence(landmarker, Path(vpath), save_path)
+    landmarker.close()
+    return video_id, n_frames, ok, False
+
+
 def run_slr(args, landmarker):
     """SLR isolated word processing.
     Frame sequences: {video_dir}/{word_idx}/{session}/000001.jpg ... 000067.jpg
@@ -261,7 +277,7 @@ def run_slr(args, landmarker):
         return
 
     total_videos = sum(len(v) for v in video_map.values())
-    print(f"SLR: {total_videos} videos, {len(video_map)} words")
+    print(f"SLR: {total_videos} videos, {len(video_map)} words", flush=True)
 
     train_list, dev_list = [], []
     for word_idx, videos in sorted(video_map.items()):
@@ -275,35 +291,36 @@ def run_slr(args, landmarker):
 
     print(f"  Train: {len(train_list)}, Dev: {len(dev_list)}")
 
+    num_workers = getattr(args, 'num_workers', 4)
+
     for split_name, video_list in [("train", train_list), ("dev", dev_list)]:
+        if args.max_videos:
+            video_list = video_list[:args.max_videos]
+
         out_dir = Path(args.output_dir) / split_name
         out_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
         total = len(video_list)
-        processed, errors = 0, 0
+        processed, errors, skipped = 0, 0, 0
 
-        for i, (vpath, word_idx, word) in enumerate(video_list):
-            if args.max_videos and processed >= args.max_videos:
-                break
+        worker_fn = partial(_slr_worker, out_dir=out_dir, model_path=args.model_path)
+        with multiprocessing.Pool(processes=num_workers) as pool:
+            for i, (video_id, n_frames, ok, was_skipped) in \
+                    enumerate(pool.imap_unordered(worker_fn, video_list)):
+                if was_skipped:
+                    skipped += 1
+                elif ok:
+                    processed += 1
+                else:
+                    errors += 1
+                if (i + 1) % 100 == 0 or (i + 1) == total:
+                    elapsed = time.time() - start
+                    done = processed + errors + skipped
+                    eta = (elapsed / max(done, 1)) * (total - done)
+                    print(f"  [{split_name}] {done}/{total} ({processed} ok, {errors} err, "
+                          f"{skipped} skip) | ETA: {eta / 60:.1f}min")
 
-            video_id = f"{word_idx}_{Path(vpath).stem}"
-            save_path = out_dir / f"{video_id}.npy"
-            if save_path.exists():
-                continue
-
-            n_frames, ok = process_frame_sequence(landmarker, Path(vpath), save_path)
-            if ok:
-                processed += 1
-            else:
-                errors += 1
-
-            if (i + 1) % 100 == 0:
-                elapsed = time.time() - start
-                eta = (elapsed / max(processed, 1)) * (total - processed)
-                print(f"  [{split_name}] {processed}/{total} | word: {word} | "
-                      f"ETA: {eta / 60:.1f}min")
-
-        print(f"  {split_name} done: {processed} processed, {errors} errors")
+        print(f"  {split_name} done: {processed} processed, {skipped} skipped, {errors} errors")
 
     label_path = Path(args.output_dir) / "labels.json"
     with open(label_path, "w", encoding="utf-8") as f:
@@ -430,15 +447,16 @@ def main():
     print(f"Video: {args.video_dir}")
     print(f"Output: {args.output_dir}")
 
+    # SLR/CSL-Daily 走多进程，worker 各自创建 landmarker，主进程不需要
+    if args.dataset == "slr" or args.dataset == "csl-daily":
+        if args.dataset == "slr":
+            run_slr(args, None)
+        else:
+            run_csl_daily(args, None)
+        return
+
     landmarker = create_landmarker(args.model_path)
-
-    if args.dataset == "ce-csl":
-        run_ce_csl(args, landmarker)
-    elif args.dataset == "slr":
-        run_slr(args, landmarker)
-    elif args.dataset == "csl-daily":
-        run_csl_daily(args, landmarker)
-
+    run_ce_csl(args, landmarker)
     landmarker.close()
 
 
