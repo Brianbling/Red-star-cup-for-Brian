@@ -402,3 +402,29 @@ top-478 下 CSL-Daily 大量标签被静默丢弃（`_gloss_to_ids` 容错跳过
 - **`src/train.py` 加 `--isolated-index` 参数**：非 None 时 `IsolatedKeypointDataset` 混入训练集（CombinedDataset），冒烟测试 CE-CSL 4972 + CSL-Daily 18400 + isolated 271 = 23643 样本通过
 - 提交 08d73ca（worktree 分支）
 - **下一步（GPU 实验清单）**：E1 OOV 词表扩展重训（3515→3812 并 C 类 297 词）、E2 混入比例下调（缺手率域偏移修正）、E3 已完成、E4 SLR 定向 10 类（公务员/天文/就业/按钮/眼 等 5 个 ≤3 次词）
+
+### 2026-08-02 — 新训（isolated 混合）突破 baseline【进行中】
+
+**训练状态**：`checkpoints/csldaily_iso/`，命令 `train.py --vocab vocab.json --csldaily-base E:/CSL-Daily/CSL-Daily --activity-detect --vae-loss --visual-fusion none --isolated-index "D:/red star project/isolated_words/index.json" --checkpoint-dir checkpoints/csldaily_iso`（PID 50848）
+
+- 数据组成：CE-CSL 4972 + CSL-Daily 18400 + 孤立词 271 = **23643 样本**
+- **best WER 64.24%（Epoch 77/81，S=20.1% D=42.4% I=1.7%）**，跌破 66.58% baseline **1.81pp**，较旧训 66.76% 提升 2.52pp
+- 关键轨迹：Epoch 47 平台 67.45% → lr 降至 0.000125 后 Epoch 63 首次跌破 baseline（65.25%）→ Epoch 77/81 至 64.24% → Epoch 84 lr 再降至 0.000063 后 64.36%
+- **验证了"词汇覆盖是瓶颈"假设**：孤立词补的是 S（分类能力 21.3→20.1%），D（缺失检测）回到 41.8% 与 baseline 持平。CSL-Daily 混合单独用无效，必须配孤立词解锁
+- **代码审查发现长度对齐 bug**（Workflow 确认中）：model.py:97 `input_lengths=(L//4)` vs conv 实际 `ceil(L/4)`，L%4≠0 的 42 个长度下每序列末帧被静默丢弃（~4.5% 监督帧），严重度低-中，非 22pp 差距主因
+
+### 2026-08-02 — Web 化前后端识别系统【规划，待实现】
+
+**动机**：Phase 5 YOLO 旁路权重已训好（L1290 mAP50=0.985），但主路实时管线（Phase 4）未实现。为验证训练结果 + 承载主路/静态词，搭建 Web 化实时识别系统。架构详见 `ARCHITECTURE.md` v2 章节。
+
+**分阶段**：
+- **S1（本次样品）**：只接旁路 YOLO（帧→YOLO→35类→防抖→前端显示），验证 `l1290 best.pt` 实际效果。半天跑通
+- **S2**：接主路（MediaPipe→84d→滑动窗口→BiLSTM+CTC→句子），顺带完成 Phase 4 实时管线
+- **S3**：仲裁层融合双路 + config.yaml（解决路径硬编码待办）
+
+**技术选型**：FastAPI（原生 asyncio+WS）后端 + 浏览器 getUserMedia 摄像头 + WS 传 JPEG 帧 @10fps + 推理独立线程。
+
+**S1 文件布局**：`backend/main.py`（FastAPI+WS）、`inference/static_yolo.py`（YOLO 封装）、`frontend/index.html + app.js`。
+**依赖**：fastapi / uvicorn / websockets 需新增（当前 yolov8 环境未装），补 requirements.txt。
+**权重路径**：YOLO 权重实际在 worktree `.../exp+zero-cost-optimization/YOLOv8/runs/l1290/weights/best.pt`（主仓库该路径不存在，CLAUDE.md 已注明）。
+**待确认**：摄像头在浏览器端（推荐）还是后端 cv2 直读；静态词先用 35 类还是等 SLR 完整词表。
