@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>红星光 · CSL 手语实时识别（S1 旁路 YOLO）</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+  }
+  header h1 {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+  header h1 .badge {
+    font-size: 14px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 2px 10px;
+    margin-left: 12px;
+    vertical-align: middle;
+    font-weight: 400;
+  }
+  .connect-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 0 rgba(139,148,158,0.5);
+  }
+  .dot.ok { background: var(--good); animation: pulse 1.6s infinite; }
+  .dot.bad { background: var(--bad); }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(63,185,80,0.5); }
+    70%  { box-shadow: 0 0 0 10px rgba(63,185,80,0); }
+    100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); }
+  }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 20px;
+    padding: 20px 24px;
+    min-height: 0;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .panel h2 {
+    font-size: 20px;
+    font-weight: 600;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  #camera-panel { align-items: center; }
+  #video {
+    width: 100%;
+    max-height: calc(100vh - 220px);
+    object-fit: contain;
+    background: #000;
+    border-radius: 0 0 12px 12px;
+  }
+  #video.placeholder { object-fit: contain; }
+
+  .controls {
+    padding: 14px 18px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    border-top: 1px solid var(--panel-border);
+  }
+  button {
+    font-size: 18px;
+    font-family: inherit;
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: #21262d;
+    color: var(--text);
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  button:hover { background: #30363d; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  button.stop { background: #da3633; border-color: #da3633; color: #fff; }
+  button.stop:hover { background: #f85149; }
+
+  .cam-state {
+    padding: 0 18px 14px;
+    font-size: 16px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  #status-panel { flex: 1; }
+  .status-row {
+    display: flex;
+    gap: 14px;
+    padding: 16px 18px;
+    flex-wrap: wrap;
+  }
+  .state-lamp {
+    flex: 1;
+    min-width: 130px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+    background: #0d1117;
+  }
+  .state-lamp .lamp-label { font-size: 15px; color: var(--muted); margin-bottom: 8px; }
+  .state-lamp .lamp-value { font-size: 24px; font-weight: 600; }
+  .lamp-value.connecting { color: var(--warn); }
+  .lamp-value.recog { color: var(--good); }
+  .lamp-value.idle { color: var(--muted); }
+
+  #results-panel { flex: 1; min-height: 0; }
+  #word-list {
+    list-style: none;
+    padding: 12px 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+  }
+  .word-card {
+    border: 1px solid var(--panel-border);
+    border-left: 5px solid var(--accent);
+    border-radius: 8px;
+    background: #0d1117;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    animation: slidein .2s ease;
+  }
+  @keyframes slidein {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .word-card .word {
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: 2px;
+  }
+  .word-card .meta {
+    text-align: right;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .word-card .meta .conf { color: var(--good); font-size: 18px; font-weight: 600; }
+  .word-card .meta .time { margin-top: 2px; }
+  .empty-hint {
+    color: var(--muted);
+    text-align: center;
+    padding: 40px 0;
+    font-size: 16px;
+  }
+
+  footer {
+    padding: 12px 24px;
+    border-top: 1px solid var(--panel-border);
+    background: var(--panel);
+    display: flex;
+    gap: 28px;
+    font-size: 15px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  footer .stat b { color: var(--text); font-weight: 600; }
+  footer .stat .warn { color: var(--warn); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>红星光 · CSL 手语识别<span class="badge">S1 · YOLO 旁路</span></h1>
+  <div class="connect-chip">
+    <span id="ws-dot" class="dot bad"></span>
+    <span id="ws-label">未连接</span>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="camera-panel">
+    <h2>📷 摄像头</h2>
+    <video id="video" autoplay muted playsinline></video>
+    <div class="controls">
+      <button id="btn-start" class="primary">启动摄像头</button>
+      <button id="btn-stop" class="stop" disabled>停止</button>
+    </div>
+    <div class="cam-state" id="cam-state">未启动 · 10fps · 480p JPEG</div>
+  </section>
+
+  <section class="panel" id="status-panel">
+    <h2>状态</h2>
+    <div class="status-row">
+      <div class="state-lamp">
+        <div class="lamp-label">连接</div>
+        <div class="lamp-value" id="lamp-conn">--</div>
+      </div>
+      <div class="state-lamp">
+        <div class="lamp-label">识别</div>
+        <div class="lamp-value" id="lamp-recog">空闲</div>
+      </div>
+      <div class="state-lamp">
+        <div class="lamp-label">最近置信度</div>
+        <div class="lamp-value" id="lamp-conf">--</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="results-panel">
+    <h2>🗒 识别结果（最近 5 个）</h2>
+    <ul id="word-list">
+      <li class="empty-hint">等待识别…</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <div class="stat">WS 状态：<b id="foot-ws">未连接</b></div>
+  <div class="stat">发出帧：<b id="foot-sent">0</b></div>
+  <div class="stat">收到帧：<b id="foot-recv">0</b></div>
+  <div class="stat">丢帧：<b id="foot-drop" class="warn">0</b></div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
