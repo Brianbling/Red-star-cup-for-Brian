@@ -249,7 +249,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 - **CSL-Daily 混合训练**：`--csldaily-base E:/CSL-Daily/CSL-Daily` 混入 18,400 连续句，数据量 4.7 倍，best WER **66.76%**（Epoch 69）——与 baseline 66.58% 几乎持平
 - **三路诊断修正了"数据量是唯一瓶颈"结论**：真实瓶颈是三层叠加——① 词汇天花板（CSL-Daily 663 个 OOV 词占 9.5% token 被静默丢弃成负信号；dev 22.4% token 是 train 低频词）、② 缺手率域偏移（CE 30.1% vs CSL-Daily 2.55%，CSL-Daily 干净帧稀释 CE 的"无手→blank"能力）、③ 孤立词索引缺口（isolated_words 1057 npy 但 index.json 只收 87 token，167 个在词表内的词从未被训练使用）
 - **孤立词索引已修复**（index.json 87→254 token / 271 样本）+ train.py 加 `--isolated-index` 参数
-- **新训（isolated 混合）跌破 baseline**：`checkpoints/csldaily_iso/`，best WER **64.24%**（Epoch 77/81，S=20.1% D=42.4% I=1.7%），较 66.58% 提升 1.81pp。验证"词汇覆盖是瓶颈"（孤立词补 S 分类能力，D 回 baseline 持平）
+- **新训（isolated 混合）跌破 baseline**：`checkpoints/csldaily_iso/`，best WER **64.24%**（Epoch 77/81，S=20.1% D=42.4% I=1.7%）。验证"词汇覆盖是瓶颈"（孤立词补 S 分类能力，D 回 baseline 持平）。**注意口径**：64.24% 是完整 3515 词表（dev 2455 token），66.58% baseline 是 top-478 子词表（dev 1954 token，丢 20.4% OOV token）——两者**不可直接相减**，真实改善下界 ≥9.16pp（可比的正确 baseline 是 66.76% csldaily_vae → 差 2.52pp）。详见 2026-08-02 代码审查结论
 
 **Web 化前后端识别系统（2026-08-02 启动）**：架构详见 `ARCHITECTURE.md` v2 章节。S1 先接旁路 YOLO（`l1290 best.pt`，35 类）验证训练成果 → S2 接主路 BiLSTM+CTC（顺带完成 Phase 4）→ S3 仲裁融合 + config.yaml。技术栈：FastAPI + WebSocket + 浏览器 getUserMedia。文件：`backend/` `inference/` `frontend/`。新增依赖 fastapi/uvicorn/websockets。**注意**：YOLO 权重实际在 worktree `.../exp+zero-cost-optimization/YOLOv8/runs/l1290/weights/best.pt`（主仓库无此路径）
 
@@ -313,6 +313,12 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | YOLO 预训练加载 | "`YOLO('yolov8s.yaml').train(pretrained=True)` 会加载 COCO 权重" | **不会**。yaml 构建的模型无 ckpt，bool pretrained 不触发 load_checkpoint（log 无 "Transferred" 行）。必须 `YOLO("yolov8s.pt")`。GitHub 下载 SSL 失败需 `ssl.CERT_NONE` + urllib 手动下载 |
 | 停服务/杀进程 | "重启服务用 `taskkill //F //IM python.exe` 全杀很省事" | **禁止按进程名全杀**（`//IM`/`taskkill python.exe`/`pkill`）。会连带杀掉同名的模型训练进程（2026-08-02 事故：S1 验证时误杀 CSL-Daily 训练 PID 50848，Epoch 87/100 中断）。停服务必须用**精确 PID**（`Stop-Process -Id <pid>` / `taskkill //F //PID <pid>`），先 `Get-CimInstance Win32_Process` 查准 PID 再杀 |
 | 平板/局域网摄像头 | "平板连 `http://192.168.x.x:8000` 就能用摄像头" | getUserMedia 要求 **secure context**（HTTPS 或 localhost），局域网 http 会被浏览器拦截摄像头。必须 HTTPS（自签证书，平板接受警告）。S1 用 `https://192.168.1.8:8000` |
+| build_isolated_index 词表硬编码 | "重跑 build_isolated_index.py 无害，只是重建索引" | 2026-08-02 前版本硬编码 `vocab_top478.json`，重跑会把 ISO 从 254 token/271 样本缩到 87/94（丢 dev 7 个 ≤3 次最难词），与 train.py `--vocab vocab.json` 脱节。**已修复**：默认改用 `vocab.json` + `--vocab` 参数。重跑后校验输出应为 254/271 |
+| 跨词表 WER 直接相减 | "64.24% vs 66.58% = 提升 1.81pp" | **无效比较**。66.58% 是 top-478 子词表（dev reference 1954 token，丢 501 个 OOV token=20.4%，真实全词表 WER 下界 73.4%），64.24% 是完整 3515 词表（dev 2455 token）。真实改善下界 ≥9.16pp；可比 baseline 是 66.76%（同为 3515 词表）→ 差 2.52pp。**跨 checkpoint 比较必须用同一词表 + 完整 dev reference** |
+| 评估口径（activity_detect 裁剪 dev） | "报告 WER 64.24% 可直接与 TFNet 42.1% 比" | dev 评估套用了训练侧的 activity_detect，裁剪 32.6% 帧（411/515 样本）→ 同权重全 dev WER 实为 **69.49%**（+5.2pp）。TFNet 42.1% 是未裁剪全视频口径，真实差距 ~27.4pp 而非 22pp。方向是让我们数字更好看 |
+| 长度对齐 `L//4` | "`input_lengths=(L//4)` 与 conv 实际输出一致" | conv 输出是 `ceil(L/4)`，`//4` 在 L%4≠0（dev 72.8% 样本）时丢 1 帧尾帧。WER 影响 ~0.2pp 且实测 ceil 反而略差，train/eval 一致使用故非 train/infer 错位。属低收益清理项，可留文档备注 |
+| normalize_hand scale 兜底 | "scale<1e-6 才兜底 0.1 够稳" | 1e-6~0.08 的小手尺度会放大坐标 12~650 倍（实测 train-00898 coord_max=651.66）。但尖峰帧仅 0.33% 有效手帧且 dev/test 对称，LayerNorm+LSTM 已吸收，WER 影响低-中。建议加 scale 真实下限 `max(scale, 0.02)` |
+| 数据量 4.7x | "CSL-Daily 18,400 文件 = 4.7 倍数据" | 18,400 文件实为 **6,598 distinct 句子**（平均 2.8 段/句，P 是 signer ID 非重复镜头），真实 distinct 内容 ~2.4x。引用数据量时须注明 distinct 句数 |
 
 ### 4. 编辑约束
 

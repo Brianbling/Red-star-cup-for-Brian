@@ -411,7 +411,7 @@ top-478 下 CSL-Daily 大量标签被静默丢弃（`_gloss_to_ids` 容错跳过
 - **best WER 64.24%（Epoch 77/81，S=20.1% D=42.4% I=1.7%）**，跌破 66.58% baseline **1.81pp**，较旧训 66.76% 提升 2.52pp
 - 关键轨迹：Epoch 47 平台 67.45% → lr 降至 0.000125 后 Epoch 63 首次跌破 baseline（65.25%）→ Epoch 77/81 至 64.24% → Epoch 84 lr 再降至 0.000063 后 64.36%
 - **验证了"词汇覆盖是瓶颈"假设**：孤立词补的是 S（分类能力 21.3→20.1%），D（缺失检测）回到 41.8% 与 baseline 持平。CSL-Daily 混合单独用无效，必须配孤立词解锁
-- **代码审查发现长度对齐 bug**（Workflow 确认中）：model.py:97 `input_lengths=(L//4)` vs conv 实际 `ceil(L/4)`，L%4≠0 的 42 个长度下每序列末帧被静默丢弃（~4.5% 监督帧），严重度低-中，非 22pp 差距主因
+- **代码审查确认长度对齐 bug**（详见下节审计结论）：model.py:97 `input_lengths=(L//4)` vs conv 实际 `ceil(L/4)`，L%4≠0 时每序列末帧被静默丢弃。**修正规模**：dev 375/515 样本（72.8%）、134 个不同长度受影响，丢帧 = conv 输出帧的 1.55%（输入帧 0.39%），非"42 个长度 / ~4.5%"
 
 ### 2026-08-02 — Web 化前后端识别系统【规划，待实现】
 
@@ -466,3 +466,32 @@ Workflow（w7p1lwu5x，3 agent 分工）：
 前端已改：`app.js` WS URL 自适应（页面 https → `wss://location.host`，否则 `ws://`）。
 
 **平板访问路径**：平板浏览器打开 `https://192.168.1.8:8000` → 接受证书警告 → 启动摄像头即测。
+
+### 2026-08-02 — 主路代码链专项审查【Workflow 结论，已完成】
+
+针对用户"WER 有没有可能是像之前一样的隐藏代码 bug"的质疑，开 Workflow（34 agent：5 板块审查 + 29 独立验证）逐项实测复现。**结论：22pp 差距不是隐藏 bug，主要是表征鸿沟（RGB 全帧端到端 vs 84d 关键点）+ 评估口径**。确认的 bug 均为低收益清理项。
+
+#### 确认的代码 bug（都是真实缺陷，但 WER 影响全部 ≤0.2pp 或中性）
+
+| 缺陷 | 位置 | WER 影响 |
+|------|------|---------|
+| `input_lengths=(L//4)` 低估 conv 实际输出 `ceil(L/4)`，末帧被 pack 静默截断 | `model.py:97` `train.py:287` | **~0.2pp 且实测 ceil 反而略差**（best ckpt dev 上 floor 64.28% vs ceil 64.48%，floor 更优）。被丢尾帧 P(blank)≈0.74 多为 blank，无 CTC 信息；train/eval 一致使用，非 train/infer 错位。修复优先级极低 |
+| `normalize_hand` scale 兜底下限 1e-6，1e-6~0.08 小手尺度放大坐标 12~650 倍 | `preprocess_keypoints.py:62` | **低-中**。|c|>10 尖峰帧仅占有效手帧 0.33%（3380/1049611），且 dev/test 对称含尖峰（26.6%/31.6%），LayerNorm+LSTM 已吸收；scale 与尖峰幅值相关性 Pearson=-0.063（近零），主因是 MediaPipe 单帧整手离群（38/42 坐标同爆）而非分母爆炸。注意 25.9% train 文件含尖峰帧属实（1290/4972），但那是"文件级"计数 |
+| activity-detect 后 `target>L//4` 样本产生 inf CTC，整批梯度静默丢弃 | `train.py:302`（`zero_infinity=False`） | 坏样本仅 0.026~0.06%，可忽略，非瓶颈。可选修 `zero_infinity=True` |
+| 评估口径：dev 评估也套用 `activity_detect=True`，裁剪 32.6% 帧 | `train.py:183` | **+5.2pp 方向影响**（同权重 dev：裁剪后 64.28% vs 原始帧 69.49%）。TFNet 42.1% 是未裁剪全视频口径，两者不可直接比较——真实差距约 27.4pp 而非 22pp。**方向是让我们的数字更好看，不是更严** |
+| `build_isolated_index.py` 硬编码 `vocab_top478.json`，重跑会把 ISO 从 271 缩到 94 样本 | `build_isolated_index.py:20` | 潜伏可复现性破坏。**已修复**（默认改用 `vocab.json` + `--vocab` 参数，重跑实测 254 token / 271 样本，与磁盘索引逐位一致） |
+| 词表排除 `'。'` 导致 dev 387 个句号被静默丢弃（ref 少 13.6% token） | `build_vocab.py:29` | raw 口径 +3.07pp（69.49→72.56）。但 `'。'` 从未进词表/训练，保留进 ref 必然全变 delete，属"标点表示差异"而非模型缺陷。若要严格对齐 TFNet 需把 `'。'` 并入词表训练 |
+| `'？'`(U+FF1F) 在词表内且模型常预测（dev 128 个命中 106-119） | `build_vocab.py:28` | **PLAUSIBLE 且方向反转**：把 `'？'` 当标点剔除反而让 WER +0.79~0.94pp（模型已学会预测它并匹配 ref）。当前自洽设计，非虚高 |
+
+#### 审查排除的误报（REFUTED / 无影响）
+
+- **TFNet 蒸馏分支缺失（FFT 双路 + KL 自蒸馏）**：gap 真实存在但影响 ≈0pp。FFT 分支已在 CHANGELOG 显式否决（-0.8pp 不划算）；KL 自蒸馏在小数据 regime 下与历史所有训练期辅助策略（SR-CTC、augment +9.1pp、grouped padding +2.3pp、visual fusion +18pp）结论冲突
+- **TFNet 训练细节（hidden 1024 / lr 1e-4 / pad-to-multiple-of-4）**：差异属实但 ≈0pp，hidden 512→1024 在 ~5K 样本上反而有过拟合风险
+- **逐句平均 vs 整体聚合 WER 口径**：差异仅 +0.24~0.76pp
+- **解码顺序 / 空格 token / batch=1 vs 2 长度语义**：全部正确，0 影响
+- **TSC 模块、blank_bias 继承、ReduceLROnPlateau**：REFUTED（TSC 从未实现；blank_bias=5.32 本就在 84d+LayerNorm 下校准）
+
+#### 两个最重要的结论（改写了 CHANGELOG 之前的口径）
+
+1. **"64.24% vs 66.58%"是混合分母的无效比较**：66.58% baseline 是 top-478 词表（dev reference 1954 token，丢 501 个 OOV token=20.4%，真实全词表 WER 下界 73.4%）；64.24% 是完整 3515 词表（dev 2455 token）。**64.24% 相对 baseline 的真实改善下界 ≥9.16pp**（可比的正确 baseline 是 66.76% → 差 2.52pp）。之前所有把 64.24% 与 66.58% 相减的记录（1.81pp）都不成立
+2. **"数据量翻倍 = WER 提升"结论被进一步削弱**："4.7x 数据"按 distinct 内容实为 ~2.4x（18,400 文件 = 6,598 distinct 句子 × 平均 2.8 段/句，P 是 signer ID 非重复镜头）；CSL-Daily OOV 静默丢弃占 9.54% token、48.2% 样本含污染帧——但三路诊断（词汇覆盖 + 缺手域偏移）仍是主因，旁证 ISO 贡献 ~2.2pp（64.24% vs 无 ISO 66.40%，同一 seed 受控对比）

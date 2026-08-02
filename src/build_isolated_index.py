@@ -1,15 +1,16 @@
 """
 孤立词 → CE-CSL 词表 索引构建。
 扫描 isolated_words/keypoints/{basic,common} 下的 .npy，
-用 clean_word(文件名 stem) 匹配 vocab_top478.json 的 word2idx。
+用 clean_word(文件名 stem) 匹配 vocab.json 的 word2idx（默认与 train.py --vocab 对齐）。
 
 输出: isolated_words/index.json
   { "<token>": [{"dataset": "basic", "path": "...", "video_id": "..."}], ... }
 
 用法:
-  python build_isolated_index.py
+  python build_isolated_index.py [--vocab PATH]
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -17,13 +18,19 @@ from pathlib import Path
 MAIN_BASE = Path("D:/red star project")
 KEYPOINT_ROOT = MAIN_BASE / "isolated_words" / "keypoints"
 INDEX_PATH = MAIN_BASE / "isolated_words" / "index.json"
-VOCAB_PATH = MAIN_BASE / "vocab_top478.json"
+VOCAB_PATH = MAIN_BASE / "vocab.json"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vocab_utils import clean_word
 
 
 def main():
+    global VOCAB_PATH
+    parser = argparse.ArgumentParser(description="构建孤立词 → 词表索引")
+    parser.add_argument("--vocab", default=str(VOCAB_PATH), help="词表 json 路径（默认 vocab.json，与 train.py --vocab 对齐）")
+    args = parser.parse_args()
+    VOCAB_PATH = Path(args.vocab)
+
     with open(VOCAB_PATH, "r", encoding="utf-8") as f:
         vocab = json.load(f)
     word2idx = vocab["word2idx"]
