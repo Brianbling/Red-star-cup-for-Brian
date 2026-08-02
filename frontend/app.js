@@ -16,7 +16,10 @@ const $ = id => document.getElementById(id);
 const video      = $('video');
 const btnStart   = $('btn-start');
 const btnStop    = $('btn-stop');
+const btnFull    = $('btn-fullscreen');
 const camState   = $('cam-state');
+const banner     = $('https-banner');
+const bannerClose = $('banner-close');
 const wsDot      = $('ws-dot');
 const wsLabel    = $('ws-label');
 const lampConn   = $('lamp-conn');
@@ -211,6 +214,19 @@ function renderStats() {
 // ---- 驱动 ----
 btnStart.addEventListener('click', startCamera);
 btnStop.addEventListener('click', stopCamera);
+btnFull.addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+});
+
+// 非 secure context（局域网 http）下摄像头会被浏览器拦截，引导用户走 https
+if (location.protocol !== 'https:') {
+  banner.hidden = false;
+}
+bannerClose.addEventListener('click', () => { banner.hidden = true; });
 
 // 全局采样循环：有流且 WS 打开时定时取帧
 setInterval(sendFrame, FRAME_MS);

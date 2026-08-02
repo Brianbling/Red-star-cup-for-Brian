@@ -14,6 +14,9 @@ ASL Alphabet/
 *.tflite
 *.task
 
+# 自签 TLS 证书（私钥不入库）
+certs/
+
 # 多媒体
 *.mp4
 *.jpg

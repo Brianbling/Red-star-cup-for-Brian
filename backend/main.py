@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import queue
+import sys
 import threading
 import time
 from pathlib import Path
@@ -25,7 +27,13 @@ from inference.static_yolo import StaticYOLO
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX_HTML = ROOT / "frontend/index.html"
+CERT_DIR = ROOT / "certs"
 FRAME_TIMEOUT_S = 2.0  # 防抖状态超过该时长无帧则重置
+
+# 平板经局域网访问需 secure context 才能用摄像头（getUserMedia），
+# 唯一可用路径是 HTTPS。证书就绪即走 TLS；本机调试可设 NO_HTTPS=1 或 --no-https。
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8000
 
 app = FastAPI(title="红星光 CSL S1 YOLO 旁路")
 
@@ -165,10 +173,31 @@ async def ws_recog(ws: WebSocket) -> None:
         _model.reset()
 
 
+def _certs_ready() -> tuple[str, str] | None:
+    cert, key = CERT_DIR / "cert.pem", CERT_DIR / "key.pem"
+    if cert.is_file() and key.is_file():
+        return str(cert), str(key)
+    return None
+
+
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000)
+    no_https = "--no-https" in sys.argv or os.environ.get("NO_HTTPS") == "1"
+    kwargs = {}
+    if not no_https:
+        ssl = _certs_ready()
+        if ssl:
+            kwargs.update(ssl_certfile=ssl[0], ssl_keyfile=ssl[1])
+            print(f"[server] HTTPS enabled: {ssl[0]}")
+        else:
+            print(
+                "[server] certs/cert.pem + key.pem 缺失，退化为明文 HTTP（仅限本机调试）"
+            )
+    else:
+        print("[server] --no-https：明文 HTTP（仅限本机调试）")
+
+    uvicorn.run("backend.main:app", host=DEFAULT_HOST, port=DEFAULT_PORT, **kwargs)
 
 
 if __name__ == "__main__":
