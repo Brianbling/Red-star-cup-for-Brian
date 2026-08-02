@@ -48,6 +48,7 @@ DATASETS = {
 
 PRESENCE_THRESHOLD = 0.6
 HAND_SCALE_FALLBACK = 0.1
+MIN_HAND_SCALE = 0.02  # 真实尺度下限：1e-6 兜底会把 1e-6~0.02 的极小 scale 放大 12~650 倍（audit 确认）
 WRIST_IDX = 0
 MIDDLE_MCP_IDX = 9
 
@@ -59,7 +60,7 @@ def normalize_hand(kp_hand):
     if (wrist == 0).all():
         return kp_hand
     hand_scale = np.linalg.norm(middle_mcp - wrist)
-    if hand_scale < 1e-6:
+    if hand_scale < MIN_HAND_SCALE:
         hand_scale = HAND_SCALE_FALLBACK
     normalized = np.zeros_like(kp_hand)
     for j in range(21):

@@ -317,7 +317,7 @@ CE-CSL 视频 → MediaPipe Hands 逐帧提取关键点 → .npy (每视频一�
 | 跨词表 WER 直接相减 | "64.24% vs 66.58% = 提升 1.81pp" | **无效比较**。66.58% 是 top-478 子词表（dev reference 1954 token，丢 501 个 OOV token=20.4%，真实全词表 WER 下界 73.4%），64.24% 是完整 3515 词表（dev 2455 token）。真实改善下界 ≥9.16pp；可比 baseline 是 66.76%（同为 3515 词表）→ 差 2.52pp。**跨 checkpoint 比较必须用同一词表 + 完整 dev reference** |
 | 评估口径（activity_detect 裁剪 dev） | "报告 WER 64.24% 可直接与 TFNet 42.1% 比" | dev 评估套用了训练侧的 activity_detect，裁剪 32.6% 帧（411/515 样本）→ 同权重全 dev WER 实为 **69.49%**（+5.2pp）。TFNet 42.1% 是未裁剪全视频口径，真实差距 ~27.4pp 而非 22pp。方向是让我们数字更好看 |
 | 长度对齐 `L//4` | "`input_lengths=(L//4)` 与 conv 实际输出一致" | conv 输出是 `ceil(L/4)`，`//4` 在 L%4≠0（dev 72.8% 样本）时丢 1 帧尾帧。WER 影响 ~0.2pp 且实测 ceil 反而略差，train/eval 一致使用故非 train/infer 错位。属低收益清理项，可留文档备注 |
-| normalize_hand scale 兜底 | "scale<1e-6 才兜底 0.1 够稳" | 1e-6~0.08 的小手尺度会放大坐标 12~650 倍（实测 train-00898 coord_max=651.66）。但尖峰帧仅 0.33% 有效手帧且 dev/test 对称，LayerNorm+LSTM 已吸收，WER 影响低-中。建议加 scale 真实下限 `max(scale, 0.02)` |
+| normalize_hand scale 兜底 | "scale<1e-6 才兜底 0.1 够稳" | 1e-6~0.08 的小手尺度会放大坐标 12~650 倍（实测 train-00898 coord_max=651.66）。但尖峰帧仅 0.33% 有效手帧且 dev/test 对称，LayerNorm+LSTM 已吸收，WER 影响低-中。**已修复**：三个文件（`preprocess_keypoints.py` / `extract_isolated_words.py` / `normalize_existing.py`）统一改为 `scale < 0.02 → 用 0.1 兜底`。新提取/重归一化才生效，现有 1,247,783 帧数据未重跑（重跑会使 best.pt 失效，尖峰仅 0.33% 不值得） |
 | 数据量 4.7x | "CSL-Daily 18,400 文件 = 4.7 倍数据" | 18,400 文件实为 **6,598 distinct 句子**（平均 2.8 段/句，P 是 signer ID 非重复镜头），真实 distinct 内容 ~2.4x。引用数据量时须注明 distinct 句数 |
 
 ### 4. 编辑约束

@@ -495,3 +495,12 @@ Workflow（w7p1lwu5x，3 agent 分工）：
 
 1. **"64.24% vs 66.58%"是混合分母的无效比较**：66.58% baseline 是 top-478 词表（dev reference 1954 token，丢 501 个 OOV token=20.4%，真实全词表 WER 下界 73.4%）；64.24% 是完整 3515 词表（dev 2455 token）。**64.24% 相对 baseline 的真实改善下界 ≥9.16pp**（可比的正确 baseline 是 66.76% → 差 2.52pp）。之前所有把 64.24% 与 66.58% 相减的记录（1.81pp）都不成立
 2. **"数据量翻倍 = WER 提升"结论被进一步削弱**："4.7x 数据"按 distinct 内容实为 ~2.4x（18,400 文件 = 6,598 distinct 句子 × 平均 2.8 段/句，P 是 signer ID 非重复镜头）；CSL-Daily OOV 静默丢弃占 9.54% token、48.2% 样本含污染帧——但三路诊断（词汇覆盖 + 缺手域偏移）仍是主因，旁证 ISO 贡献 ~2.2pp（64.24% vs 无 ISO 66.40%，同一 seed 受控对比）
+
+#### 审计确认 bug 修复【已完成，commit 待记】
+
+用户"修复好之后把现在这个版本 commit 上去，要更新系统文档和日志"。据上表修复了两个低收益但真实的缺陷：
+
+- **`normalize_hand` scale 兜底 1e-6 → 0.02**：三个文件统一修改（`src/preprocess_keypoints.py`、`src/extract_isolated_words.py`、`src/normalize_existing.py`），`MIN_HAND_SCALE = 0.02`，`scale < 0.02` 时用 0.1 兜底（而非 1e-6 把 1e-6~0.02 的极小尺度放大 12~650 倍）。`normalize_existing.py` 的 `n_zero_scale` 计数口径同步改为 `< 0.02`。**决策：不重跑现有 1,247,783 帧数据**——重归一化会静默改变已训权重（best 64.24% / csldaily_iso best.pt）的输入分布使 checkpoint 失效；尖峰帧仅 0.33% 有效手帧且 dev/test 对称，修复只在未来新提取数据时生效
+- **`input_lengths=(L//4)` vs `ceil(L/4)`**：审计确认 WER 影响 ~0.2pp 且实测 floor 反而更优（64.28% vs 64.48%）、train/eval 一致使用故非 train/infer 错位。**决策：不修**，保留注释说明（低收益清理项，见 CLAUDE.md Landmine 长度对齐 `L//4`）
+
+配套文档同步：ARCHITECTURE.md 归一化描述（兜底 0.02 + 0.1 下限）、CLAUDE.md Landmine normalize_hand 行（"建议加" → "已修复"，注明未重跑数据的口径）。

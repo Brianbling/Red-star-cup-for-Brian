@@ -52,6 +52,7 @@ checkpoints/
 
 # 临时 / 日志
 *.log
+logs/
 YOLOv8/mnist_jpg/
 YOLOv8/runs/
 YOLOv8/mnist/

@@ -4,7 +4,7 @@
 每帧每只手独立处理：
   wrist   = landmark 0（hand[0:2]）
   lm9     = 中指 MCP（hand[18:20]）
-  scale   = ||lm9 - wrist||_2（< 1e-6 时用 1e-6 兜底）
+  scale   = ||lm9 - wrist||_2（< 0.02 时用 0.02 兜底）
   坐标     = (coord - wrist) / scale
   手部完全丢失（该手 42 值全零）→ 保持全零
 
@@ -21,7 +21,8 @@ import numpy as np
 
 SOURCE_BASE = Path("E:/CE-CSL/CE-CSL/keypoints")
 OUTPUT_BASE = Path("E:/CE-CSL/CE-CSL/keypoints_normalized")
-EPSILON = 1e-6
+EPSILON = 1e-12          # 帧级全零判定（该手未检测）
+MIN_HAND_SCALE = 0.02    # 归一化尺度下限：1e-6 会把 1e-6~0.02 的小手放大 12~650 倍（audit 确认）
 
 
 def normalize_hand(hand):
@@ -29,8 +30,8 @@ def normalize_hand(hand):
     wrist = hand[0:2]
     lm9 = hand[18:20]
     scale = float(np.hypot(lm9[0] - wrist[0], lm9[1] - wrist[1]))
-    if scale < EPSILON:
-        scale = EPSILON
+    if scale < MIN_HAND_SCALE:
+        scale = MIN_HAND_SCALE
     out = np.zeros_like(hand)
     for j in range(21):
         out[j * 2] = (hand[j * 2] - wrist[0]) / scale
@@ -57,7 +58,7 @@ def normalize_file(src_path, dst_path):
             out[t, offset:offset + 42] = hand_n
             scales.append(scale)
             n_valid_frames += 1
-            if scale <= EPSILON:
+            if scale < MIN_HAND_SCALE:
                 n_zero_scale += 1
 
     dst_path.parent.mkdir(parents=True, exist_ok=True)
